@@ -25,7 +25,7 @@ Start with the [historical ingestion notebook](../notebooks/01_historical_ingest
    ```
 
    For PowerShell and connection checks, see [local Prefect setup](../README.md#prefect-ui-and-local-daily-schedule).
-5. If demonstrating GitHub deployment, prepare the [Cloud workspace, Process pool, worker and branches](DEPLOYMENT.md) before class. Open GitHub Actions and the Prefect Cloud deployment screen. Rehearse with a fixture run.
+5. If demonstrating GitHub deployment, prepare the [Cloud workspace, Managed work pool, and branches](DEPLOYMENT.md) before class. Open GitHub Actions and the Prefect Cloud deployment screen. Rehearse with a fixture run.
 
 ## 00–07 · Tour the repository (7 minutes)
 
@@ -73,7 +73,7 @@ uv run market-data serve --source fixture
 
 Keep it running. Show `historical-ingestion/workshop-daily` in Deployments and click **Quick run**. Explain that Prefect schedules run creation, and the serving process executes each run.
 
-If the Cloud setup is ready, show the Secret block name with its value hidden. Trace that name from `prefect.yaml` to `Secret.load(...).get()` in the flow, then show the commit SHA and worker status. Use the [deployment guide](DEPLOYMENT.md) for the full exercise. The local run covers orchestration if Cloud is unavailable.
+If the Cloud setup is ready, show the Secret block name with its value hidden. Trace that name from `prefect.yaml` to `Secret.load(...).get()` in the flow, then show the commit SHA and Managed work pool. Use the [deployment guide](DEPLOYMENT.md) for the full exercise. The local run covers orchestration if Cloud is unavailable.
 
 ## 45–52 · Recover missed batches (7 minutes)
 
@@ -100,6 +100,25 @@ Open each run in Prefect. The first fails on attempt one, retries, and completes
 | Manual backfill | An operator chooses an explicit start and end date to load or repair. |
 
 [Prefect task and retry settings](https://reference.prefect.io/prefect/tasks/) · [Prefect cache policies](https://reference.prefect.io/prefect/cache_policies/)
+
+## Cloud follow-up: PR, schedule, and failure alert
+
+1. Before the first release, apply the updated [schema](../sql/schema.sql) in Supabase SQL Editor to add hourly Silver and Gold. In class, show the hourly schedule at **06:00 and 12:00 Accra**. Start the [hourly backfill](DEPLOYMENT.md#7-collect-hourly-gold-bars) if the tables are still empty. Trace the latest saved hour, the exclusive cutoff, and the Silver and Gold steps in [the hourly flow](../src/market_data/flows/hourly_ingestion.py). Compare the counts for both tables in Supabase.
+2. Open the schedule PR and show the cron change in `prefect.yaml`. Merge when ready. Watch **checks** then **deploy**, and compare the deployment version in Prefect Cloud with the commit on `main`. Open the schedule to confirm the new times.
+3. Optional alert: In Prefect Cloud, open **Automations** and add a **Flow run state** trigger for **Failed**, with the single flow run tag `classroom-alert-demo`. Choose **Send an email notification**, if available in your workspace, and enter your own test inbox. Save and enable it. The tag keeps the classroom alert scoped to the test run.
+4. From the Cloud terminal, schedule the following one-off run a minute ahead. Show it enter **Scheduled**, then open the logs once it reaches **Failed**. The start and end match, so the hourly flow rejects the empty window before fetching or writing.
+
+   ```sh
+   uv run --locked prefect deployment run 'hourly-ingestion/hourly-gold-bars' \
+     --flow-run-name classroom-alert-demo --start-in '1 minute' --tag classroom-alert-demo \
+     --params '{"source":"fixture","skip_db":true,"require_db":false,"database_secret_block":null,"start_at":"2025-01-06T12:00Z","end_at":"2025-01-06T12:00Z"}'
+   ```
+
+5. Check the automation activity and your inbox, then pause the demo automation. If email isn't available, use the run's Failed state and logs to teach how the trigger would work.
+
+For the later ML session, a 12:00 checkpoint can use features available by noon to predict the close of the bar ending at 18:00, or the return between the two closes. Four evenly spaced checkpoints keep the horizon at six hours, including 18:00 to midnight. Skip examples where the target bar is missing. Target construction, the time-based split, and model training come later.
+
+[Prefect automation setup](https://www.prefect.io/docs/v3/how-to-guides/automations/creating-automations) · [Prefect email notifications](https://www.prefect.io/docs/v3/concepts/automations#sending-notifications-with-automations)
 
 ## Backup routes
 

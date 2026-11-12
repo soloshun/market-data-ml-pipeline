@@ -5,32 +5,18 @@ from pathlib import Path
 
 import polars as pl
 from prefect import flow, get_run_logger, task
-from prefect.blocks.system import Secret
 from prefect.cache_policies import NO_CACHE
 from prefect.runtime import task_run
 
 from market_data import config, storage
-from market_data.config import OVERLAP_DAYS, Database, FailureDemo, Source
+from market_data.config import OVERLAP_DAYS, FailureDemo, Source
+from market_data.flows._shared import database_target, retry_transient
 from market_data.ingest import TransientFetchError, fetch_yahoo, read_fixture, save_snapshot
 from market_data.transform import build_features
 from market_data.validate import validate_prices
 
 Windows = dict[str, tuple[date, date]]
 Frames = dict[str, pl.DataFrame]
-
-
-def retry_transient(_task, _task_run, state) -> bool:
-    """Decide whether Prefect should retry a failed fetch task.
-
-    Args:
-        _task: Prefect task definition supplied to the callback.
-        _task_run: Prefect task run supplied to the callback.
-        state: Failed task state containing the exception.
-
-    Returns:
-        True when the fetch raised a TransientFetchError.
-    """
-    return isinstance(state.result(raise_on_failure=False), TransientFetchError)
 
 
 @task(
@@ -100,22 +86,6 @@ def validate_and_transform(batches: Frames, windows: Windows) -> tuple[pl.DataFr
     return prices, features
 
 
-def _database_target(require_db: bool, secret_block: str | None) -> Database:
-    """Load the deployment credential at runtime or use the local database settings."""
-    if secret_block:
-        try:
-            secret = Secret.load(secret_block)
-        except ValueError:
-            raise ValueError(
-                f"Create a Secret block named {secret_block!r} in this Prefect workspace."
-            ) from None
-        url = secret.get()
-        if not isinstance(url, str) or not url.strip():
-            raise ValueError(f"Secret block {secret_block!r} needs a PostgreSQL connection string.")
-        return url
-    return config.database_target(require_postgres=require_db)
-
-
 @task(cache_policy=NO_CACHE)
 def store_market_data(
     prices: pl.DataFrame,
@@ -140,7 +110,7 @@ def store_market_data(
     if skip_db:
         logger.warning("Database skipped. No Silver or Gold rows were written.")
         return None
-    database = _database_target(require_db, database_secret_block)
+    database = database_target(require_db, database_secret_block)
     feature_count = storage.load_market_data(database, prices, source)
     destination = f"SQLite at {database}" if isinstance(database, Path) else "PostgreSQL"
     logger.info(
@@ -199,7 +169,7 @@ def ingest_historical_prices(
     start, end = config.resolve_window(source, start_date, end_date)
     windows = dict.fromkeys(symbols, (start, end))
     if incremental:
-        database = _database_target(require_db, database_secret_block)
+        database = database_target(require_db, database_secret_block)
         latest_dates = storage.latest_dates(database, symbols)
         logger = get_run_logger()
         for symbol in symbols:

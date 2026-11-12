@@ -3,7 +3,7 @@
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from importlib.resources import files
 from pathlib import Path
 
@@ -12,7 +12,7 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
 from market_data.config import Database, Source
-from market_data.transform import build_features
+from market_data.transform import build_features, build_hourly_features
 
 UPSERT_PRICES = """
     INSERT INTO {table}
@@ -25,12 +25,21 @@ UPSERT_PRICES = """
 """
 UPSERT_FEATURES = """
     INSERT INTO {table}
-        (symbol, trade_date, daily_return, sma_5, sma_20, volatility_5)
+        (symbol, {time_key}, {return_column}, sma_5, sma_20, volatility_5)
     VALUES ({values})
-    ON CONFLICT (symbol, trade_date) DO UPDATE SET
-        daily_return = EXCLUDED.daily_return, sma_5 = EXCLUDED.sma_5,
+    ON CONFLICT (symbol, {time_key}) DO UPDATE SET
+        {return_column} = EXCLUDED.{return_column}, sma_5 = EXCLUDED.sma_5,
         sma_20 = EXCLUDED.sma_20, volatility_5 = EXCLUDED.volatility_5,
         computed_at = CURRENT_TIMESTAMP
+"""
+UPSERT_HOURLY = """
+    INSERT INTO {table}
+        (symbol, bar_start_utc, open, high, low, close, volume, source)
+    VALUES ({values})
+    ON CONFLICT (symbol, bar_start_utc) DO UPDATE SET
+        open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+        close = EXCLUDED.close, volume = EXCLUDED.volume,
+        source = EXCLUDED.source, ingested_at = CURRENT_TIMESTAMP
 """
 
 
@@ -160,7 +169,12 @@ def load_market_data(database: Database, prices: pl.DataFrame, source: Source) -
             pl.DataFrame(cursor.fetchall(), schema=["symbol", "trade_date", "close"], orient="row")
         )
         cursor.executemany(
-            UPSERT_FEATURES.format(table=features_table, values=_placeholders(database, 6)),
+            UPSERT_FEATURES.format(
+                table=features_table,
+                time_key="trade_date",
+                return_column="daily_return",
+                values=_placeholders(database, 6),
+            ),
             features.rows(),
         )
     return features.height
@@ -191,3 +205,79 @@ def row_counts(database: Database, symbol: str) -> list[tuple[str, int, int]]:
             (symbol, symbol),
         )
         return cursor.fetchall()
+
+
+def latest_hourly_bar(database: Database, symbol: str) -> datetime | None:
+    """Read the hourly watermark for one ticker.
+
+    Args:
+        database: SQLite file path or PostgreSQL connection string.
+        symbol: Ticker to look up in the hourly Silver table.
+
+    Returns:
+        Latest stored bar start in UTC, or None for an empty ticker.
+    """
+    table = _table(database, "hourly_prices")
+    with _database_cursor(database) as cursor:
+        cursor.execute(
+            f"SELECT max(bar_start_utc) FROM {table} WHERE symbol = {_placeholders(database)}",
+            (symbol,),
+        )
+        latest = cursor.fetchone()[0]
+    if isinstance(latest, str):
+        latest = datetime.fromisoformat(latest)
+    return latest.astimezone(UTC) if latest is not None else None
+
+
+def load_hourly_prices(database: Database, prices: pl.DataFrame, source: Source) -> tuple[int, int]:
+    """Upsert hourly Silver and rebuild hourly Gold in one transaction.
+
+    Args:
+        database: SQLite file path or PostgreSQL connection string.
+        prices: Validated hourly bars in the storage column order.
+        source: Source label to store alongside each bar.
+
+    Returns:
+        Silver upserts in this batch and Gold upserts across the affected tickers' history.
+    """
+    if prices.is_empty():
+        return 0, 0
+    symbols = sorted(prices.get_column("symbol").unique().to_list())
+    prices_table = _table(database, "hourly_prices")
+    features_table = _table(database, "hourly_features")
+    if isinstance(database, Path):
+        prices = prices.with_columns(pl.col("bar_start_utc").dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    with _database_cursor(database) as cursor:
+        if not isinstance(database, Path):
+            for symbol in symbols:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (f"market_data:hourly:{symbol}",),
+                )
+        cursor.executemany(
+            UPSERT_HOURLY.format(table=prices_table, values=_placeholders(database, 8)),
+            [(*row, source) for row in prices.iter_rows()],
+        )
+        # Revisions affect later returns and rolling windows, so use stored Silver history.
+        cursor.execute(
+            f"""
+            SELECT symbol, bar_start_utc, close FROM {prices_table}
+            WHERE symbol IN ({_placeholders(database, len(symbols))})
+            """,
+            symbols,
+        )
+        features = build_hourly_features(
+            pl.DataFrame(
+                cursor.fetchall(), schema=["symbol", "bar_start_utc", "close"], orient="row"
+            )
+        )
+        cursor.executemany(
+            UPSERT_FEATURES.format(
+                table=features_table,
+                time_key="bar_start_utc",
+                return_column="hourly_return",
+                values=_placeholders(database, 6),
+            ),
+            features.rows(),
+        )
+    return prices.height, features.height

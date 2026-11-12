@@ -3,7 +3,7 @@
 import argparse
 import sqlite3
 import sys
-from datetime import date
+from datetime import date, datetime
 
 import psycopg
 from dotenv import load_dotenv
@@ -11,6 +11,7 @@ from prefect.schedules import Cron
 
 from market_data import config, storage
 from market_data.flows.historical_ingestion import ingest_historical_prices
+from market_data.flows.hourly_ingestion import ingest_hourly_gold
 from market_data.ingest import TransientFetchError
 
 
@@ -22,6 +23,11 @@ def make_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    hourly = commands.add_parser("hourly", help="Collect completed hourly gold bars")
+    hourly.add_argument("--source", choices=["fixture", "yfinance"], default="fixture")
+    hourly.add_argument("--start-at", type=datetime.fromisoformat, help="Inclusive, with offset.")
+    hourly.add_argument("--end-at", type=datetime.fromisoformat, help="Exclusive, with offset.")
+    hourly.add_argument("--skip-db", action="store_true", help="Preview without database access.")
     for name, help_text in [
         ("run", "Ingest a bounded window and print a feature preview"),
         ("backfill", "Re-ingest an explicit historical window"),
@@ -84,6 +90,13 @@ def run_command(args: argparse.Namespace) -> int:
     Returns:
         Zero after the command completes successfully.
     """
+    if args.command == "hourly":
+        prices = ingest_hourly_gold(
+            source=args.source, start_at=args.start_at, end_at=args.end_at, skip_db=args.skip_db
+        )
+        print(prices.tail(6))
+        return 0
+
     source = args.source or config.data_source()
     symbols = config.resolve_symbols(source, args.symbol)
     if args.command == "counts":

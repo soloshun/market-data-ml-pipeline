@@ -1,6 +1,6 @@
 """Read a source, preserving its fields for Bronze."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 from uuid import uuid4
@@ -79,16 +79,47 @@ def fetch_yahoo(symbol: str, start: date, end: date) -> pl.DataFrame:
         TransientFetchError: The request times out, is throttled, or returns no rows.
         ValueError: Yahoo returns an unsupported index or column layout.
     """
+    return _download_yahoo(symbol, start.isoformat(), end.isoformat(), interval="1d")
+
+
+def fetch_yahoo_hourly(symbol: str, start: datetime, end: datetime) -> pl.DataFrame:
+    """Download hourly Yahoo bars without discarding the exchange timezone.
+
+    Args:
+        symbol: Yahoo Finance ticker.
+        start: First included hour, with a timezone.
+        end: First excluded hour, with a timezone.
+
+    Returns:
+        Raw OHLCV with timezone-aware timestamps in the Date column.
+
+    Raises:
+        TransientFetchError: The request fails temporarily or returns no rows.
+        ValueError: Yahoo returns an unsupported index or column layout.
+    """
+    raw = _download_yahoo(symbol, start, end, interval="1h")
+    timestamp = raw.schema["Date"]
+    if isinstance(timestamp, pl.Datetime) and timestamp.time_zone is not None:
+        # Yahoo can append an open bar. Some holiday sessions start at half past.
+        bar_time = pl.col("Date").dt.convert_time_zone("UTC")
+        raw = raw.filter(bar_time.is_between(start, end - timedelta(hours=1)).fill_null(True))
+    return raw
+
+
+def _download_yahoo(
+    symbol: str, start: str | datetime, end: str | datetime, *, interval: str
+) -> pl.DataFrame:
+    """Download one Yahoo ticker while sharing network and retry handling."""
     try:
         raw = yf.download(
             symbol,
-            start=start.isoformat(),
-            end=end.isoformat(),
-            interval="1d",
+            start=start,
+            end=end,
+            interval=interval,
             auto_adjust=False,
             multi_level_index=False,
-            ignore_tz=True,
-            keepna=True,
+            ignore_tz=interval == "1d",
+            keepna=interval == "1d",
             threads=False,
             progress=False,
             timeout=15,

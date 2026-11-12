@@ -10,16 +10,14 @@ pull:
       directory: "{{ checkout.directory }}/src"
 
 deployments:
-  - name: workshop-cloud
+  - name: hourly-gold-bars
     version: "{{ $PREFECT_CODE_REVISION }}"
-    entrypoint: market_data/flows/historical_ingestion.py:ingest_historical_prices
-    description: Catch up from the latest trade date stored in Supabase.
+    entrypoint: market_data/flows/hourly_ingestion.py:ingest_hourly_gold
+    description: Validate completed GC=F hourly bars and build trailing features.
     parameters:
       source: yfinance
-      incremental: true # Read the latest saved trade date at the start of each run.
       require_db: true
       database_secret_block: market-data-supabase-url
-      write_bronze: false
     work_pool:
       name: market-data-ml
       job_variables:
@@ -37,6 +35,6 @@ deployments:
           - curl-cffi==0.17.0
     concurrency_limit: 1
     schedules:
-      - cron: "0 6 * * *"
+      - cron: "0 6,12 * * *"
         timezone: Africa/Accra
-        active: false # Enable after the fixture and live runs pass in your workspace.
+        active: true # Pause in Prefect after the classroom trial.

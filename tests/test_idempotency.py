@@ -7,10 +7,10 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from market_data import storage
+from market_data import hourly, storage
 from market_data.config import FIXTURE_END, FIXTURE_START, FIXTURE_SYMBOL
 from market_data.ingest import read_fixture
-from market_data.validate import validate_prices
+from market_data.validate import validate_hourly_prices, validate_prices
 
 
 @pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])
@@ -84,3 +84,38 @@ def test_gold_error_rolls_back_silver(database, prices, monkeypatch):
         ("market_prices", 0, 0),
         ("market_features", 0, 0),
     ]
+
+
+def test_hourly_backfill_revises_later_gold_features(database, monkeypatch):
+    start, end = hourly.FIXTURE_START, hourly.FIXTURE_END
+    bars = validate_hourly_prices(
+        hourly.read_hourly_fixture(start, end), FIXTURE_SYMBOL, start, end
+    )
+    assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) is None
+    assert storage.load_hourly_prices(database, bars, "fixture") == (12, 12)
+    revised = bars.head(1).with_columns(pl.col("close") + 1)
+    assert storage.load_hourly_prices(database, revised, "fixture") == (1, 12)
+    assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) == bars["bar_start_utc"][-1]
+
+    def fail(_prices):
+        raise ValueError("simulated hourly feature error")
+
+    monkeypatch.setattr(storage, "build_hourly_features", fail)
+    with pytest.raises(ValueError, match="simulated hourly feature error"):
+        storage.load_hourly_prices(database, bars.head(1), "fixture")
+
+    sqlite = isinstance(database, Path)
+    prefix = "" if sqlite else "market_data."
+    connection = closing(sqlite3.connect(database)) if sqlite else storage.connect(database)
+    with connection as conn:
+        silver = conn.execute(
+            f"SELECT close FROM {prefix}hourly_prices ORDER BY bar_start_utc"
+        ).fetchall()
+        gold = conn.execute(
+            f"SELECT hourly_return, sma_5 FROM {prefix}hourly_features ORDER BY bar_start_utc"
+        ).fetchall()
+    assert len(silver) == len(gold) == 12
+    assert silver[0][0] == revised["close"][0]
+    assert gold[0] == (None, None)
+    assert gold[1][0] == pytest.approx((bars["close"][1] / revised["close"][0] - 1) * 100)
+    assert gold[4][1] == pytest.approx(sum(row[0] for row in silver[:5]) / 5)
