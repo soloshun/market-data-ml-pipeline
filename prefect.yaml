@@ -1,6 +1,6 @@
 name: market-data-ml-pipeline
 
-# Register from src/ so the entrypoint resolves both here and in the worker's checkout.
+# Register from src/ so the entrypoint resolves both here and in the run's checkout.
 pull:
   - prefect.deployments.steps.git_clone:
       id: checkout
@@ -21,7 +21,20 @@ deployments:
       database_secret_block: market-data-supabase-url
       write_bronze: false
     work_pool:
-      name: market-data-workshop
+      name: market-data-ml
+      job_variables:
+        image: prefecthq/prefect:3-python3.12
+        # The managed pool installs these before it pulls and runs the code.
+        pip_packages:
+          - prefect==3.9.2
+          - polars==1.44.2
+          - pandas==3.1.1
+          - "psycopg[binary]==3.3.8"
+          - pyarrow==26.0.1
+          - python-dotenv==1.2.4
+          - tzdata==2026.6
+          - yfinance==1.8.0
+          - curl-cffi==0.17.0
     concurrency_limit: 1
     schedules:
       - cron: "0 6 * * *"
