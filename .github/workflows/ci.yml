@@ -1,0 +1,83 @@
+name: Verify and deploy
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.17"
+      - run: uv sync --locked
+      - name: Check that local environment files are untracked
+        run: |
+          if git ls-files | grep -E '(^|/)\.env(\..*)?$' | grep -vE '(^|/)\.env\.example$'; then
+            echo "::error::Do not track local environment files."
+            exit 1
+          fi
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked pytest
+
+  deploy:
+    needs: checks
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.ENABLE_PREFECT_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: prefect-workshop-main
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.17"
+      - run: uv sync --locked --no-dev
+      - name: Register this commit with Prefect Cloud
+        working-directory: src
+        env:
+          PREFECT_API_URL: ${{ vars.PREFECT_API_URL }}
+          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+          PREFECT_CODE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
+          PREFECT_CODE_REVISION: ${{ github.sha }}
+        run: |
+          case "$PREFECT_API_URL" in
+            https://api.prefect.cloud/api/accounts/*/workspaces/*) ;;
+            *) echo "::error::Set PREFECT_API_URL to the Prefect Cloud workspace API URL."; exit 1 ;;
+          esac
+          if [ -z "$PREFECT_API_KEY" ]; then
+            echo "::error::Set the PREFECT_API_KEY GitHub Actions secret."
+            exit 1
+          fi
+          uv run --locked --no-dev prefect deploy --prefect-file ../prefect.yaml --name workshop-cloud --no-prompt

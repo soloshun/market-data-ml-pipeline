@@ -1,0 +1,28 @@
+name: market-data-ml-pipeline
+
+# Register from src/ so the entrypoint resolves both here and in the worker's checkout.
+pull:
+  - prefect.deployments.steps.git_clone:
+      id: checkout
+      repository: "{{ $PREFECT_CODE_REPOSITORY }}"
+      commit_sha: "{{ $PREFECT_CODE_REVISION }}"
+  - prefect.deployments.steps.set_working_directory:
+      directory: "{{ checkout.directory }}/src"
+
+deployments:
+  - name: workshop-cloud
+    version: "{{ $PREFECT_CODE_REVISION }}"
+    entrypoint: market_data/flows/historical_ingestion.py:ingest_historical_prices
+    description: Fetch Yahoo Finance data and persist Silver and Gold.
+    parameters:
+      source: yfinance
+      incremental: true
+      require_db: true
+      write_bronze: false
+    work_pool:
+      name: market-data-workshop
+    concurrency_limit: 1
+    schedules:
+      - cron: "0 6 * * *"
+        timezone: Africa/Accra
+        active: false
