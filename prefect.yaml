@@ -35,6 +35,6 @@ deployments:
           - curl-cffi==0.17.0
     concurrency_limit: 1
     schedules:
-      - cron: "0 6,12 * * *"
+      - cron: "0 */6 * * *"
         timezone: Africa/Accra
         active: true # Pause in Prefect after the classroom trial.
