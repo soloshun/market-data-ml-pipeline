@@ -1,14 +1,19 @@
 from datetime import date
 
 import pytest
+from prefect.blocks.system import Secret
 from prefect.testing.utilities import prefect_test_harness
 
+from market_data import storage
 from market_data.config import FIXTURE_END, FIXTURE_START, FIXTURE_SYMBOL
 from market_data.flows import historical_ingestion
 
 
 def test_fixture_flow_with_retry_and_permanent_validation_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("BRONZE_DIR", str(tmp_path))
+    database = tmp_path / "local.sqlite3"
+    monkeypatch.setenv("SQLITE_DB_PATH", str(database))
+    monkeypatch.setenv("DATABASE_URL", "a local run should ignore this")
     monkeypatch.setenv("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
     with prefect_test_harness():
         prices, features, loaded = historical_ingestion.ingest_historical_prices(
@@ -18,12 +23,16 @@ def test_fixture_flow_with_retry_and_permanent_validation_failure(tmp_path, monk
         assert loaded is None
         assert len(list(tmp_path.rglob("*.parquet"))) == 1
 
-        cloud_prices, cloud_features, loaded = historical_ingestion.ingest_historical_prices(
-            source="fixture", skip_db=True, write_bronze=False
+        local_prices, local_features, loaded = historical_ingestion.ingest_historical_prices(
+            source="fixture", write_bronze=False
         )
-        assert cloud_prices.equals(prices)
-        assert cloud_features.equals(features)
-        assert loaded is None
+        assert local_prices.equals(prices)
+        assert local_features.equals(features)
+        assert loaded == (30, 30)
+        assert storage.row_counts(database, FIXTURE_SYMBOL) == [
+            ("market_prices", 30, 30),
+            ("market_features", 30, 30),
+        ]
         assert len(list(tmp_path.rglob("*.parquet"))) == 1
 
         with pytest.raises(ValueError, match="missing required columns: High"):
@@ -33,9 +42,28 @@ def test_fixture_flow_with_retry_and_permanent_validation_failure(tmp_path, monk
         # A failed validation retains its raw snapshot for inspection.
         assert len(list(tmp_path.rglob("*.parquet"))) == 2
 
+        with pytest.raises(ValueError, match="Create a Secret block"):
+            historical_ingestion.ingest_historical_prices(
+                source="fixture", incremental=True, database_secret_block="absent"
+            )
+        Secret(value="postgresql://example.invalid/market").save("workshop-test-database")
+
+        def load_from_block(database, rows, source):
+            assert database == "postgresql://example.invalid/market"
+            assert rows.equals(prices)
+            assert source == "fixture"
+            return rows.height
+
+        monkeypatch.setattr(storage, "load_market_data", load_from_block)
+        _, _, loaded = historical_ingestion.ingest_historical_prices(
+            source="fixture",
+            write_bronze=False,
+            database_secret_block="workshop-test-database",
+        )
+        assert loaded == (30, 30)
+
 
 def test_incremental_window_uses_per_symbol_overlap(monkeypatch):
-    monkeypatch.setattr(historical_ingestion.config, "database_url", lambda: "local-test-url")
     monkeypatch.setattr(
         historical_ingestion.storage,
         "latest_dates",

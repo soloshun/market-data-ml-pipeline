@@ -18,6 +18,7 @@ deployments:
       source: yfinance
       incremental: true
       require_db: true
+      database_secret_block: market-data-supabase-url
       write_bronze: false
     work_pool:
       name: market-data-workshop

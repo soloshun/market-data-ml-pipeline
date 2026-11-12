@@ -1,6 +1,6 @@
 # Market Data ML Pipeline
 
-A runnable Data Engineering 101 workshop. Fetch historical daily open, high, low, close and volume (OHLCV), save raw Parquet, validate and calculate features in Polars, and load PostgreSQL with Prefect. The resulting tables are inputs for a later ML workshop.
+A runnable Data Engineering 101 workshop. Fetch historical daily open, high, low, close and volume (OHLCV), save raw Parquet, validate and calculate features in Polars, and load SQLite locally or Supabase from Prefect Cloud. The resulting tables are inputs for a later ML workshop.
 
 ```mermaid
 flowchart LR
@@ -8,7 +8,7 @@ flowchart LR
     B --> C["Silver · validated prices"]
     A -->|Cloud| C
     C --> D["Gold · trailing features"]
-    C --> E["PostgreSQL / Supabase"]
+    C --> E["SQLite locally or Supabase in Cloud"]
     D --> E
     F["Prefect · tasks, logs and retries"] -. orchestrates .-> B
     F -. orchestrates .-> E
@@ -22,7 +22,7 @@ Open [the historical ingestion notebook](notebooks/01_historical_ingestion.ipynb
 uv sync --locked --group notebook
 ```
 
-In VS Code, open the notebook and select the project's `.venv` under **Select Kernel → Python Environments**. Run the cells in order. The default lesson uses the fixture and local Prefect. The database cell runs when you enable it. [VS Code notebook kernel guide](https://code.visualstudio.com/docs/datascience/jupyter-kernel-management)
+In VS Code, open the notebook and select the project's `.venv` under **Select Kernel → Python Environments**. Run the cells in order. The default lesson uses the fixture and local Prefect. Section 5 writes and queries the local SQLite database. [VS Code notebook kernel guide](https://code.visualstudio.com/docs/datascience/jupyter-kernel-management)
 
 For the code walkthrough, start at `run_command` in [cli.py](src/market_data/cli.py), then read the task calls at the bottom of [the historical ingestion flow](src/market_data/flows/historical_ingestion.py). Open each task and follow the plain Python function it calls. Use [the annotated reading order](docs/ARCHITECTURE.md#read-the-code-in-this-order) alongside the [60-minute instructor guide](docs/INSTRUCTOR_DEMO.md).
 
@@ -35,7 +35,7 @@ src/market_data/
   ingest.py                      Read the fixture or Yahoo and write Bronze
   validate.py                    Enforce the Silver schema and quality rules
   transform.py                   Calculate trailing features in Polars
-  storage.py                     Load Silver and Gold in PostgreSQL
+  storage.py                     Load Silver and Gold in SQLite or PostgreSQL
   data/market_sample.csv         Packaged synthetic fixture
 notebooks/                       Run the guided ingestion lesson
 sql/                             Create the tables and verify a load
@@ -53,12 +53,13 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), open a te
 uv python install 3.12
 uv sync --locked
 cp .env.example .env
-uv run --offline --locked market-data run --source fixture --skip-db
+uv run --offline --locked market-data run --source fixture
+uv run --locked market-data counts --source fixture
 ```
 
 In PowerShell, use `Copy-Item .env.example .env` for the copy. Preserve your existing `.env` if you already configured it. The first install needs package access. After installation the fixture run needs only loopback access for Prefect's temporary server. Use a local Prefect profile or the local server below if your active profile points to Cloud.
 
-Expect **30 Silver rows**, **30 Gold preview rows**, a Bronze path under `data/bronze/`, and **PostgreSQL skipped**. `XAUUSD-DEMO` contains synthetic values for instruction. Its 30 weekday examples span January 6 through February 14, 2025. The fixture lives inside the Python package so it also ships in a wheel.
+Expect **30 Silver rows**, **30 Gold preview rows**, a Bronze path under `data/bronze/`, and **30 rows in each SQLite table**. `XAUUSD-DEMO` contains synthetic values for instruction. Its 30 weekday examples span January 6 through February 14, 2025. The fixture lives inside the Python package so it also ships in a wheel.
 
 To inspect Bronze, use the file path printed by `save_bronze`:
 
@@ -66,30 +67,20 @@ To inspect Bronze, use the file path printed by `save_bronze`:
 uv run python -c "import polars as pl; print(pl.read_parquet('PASTE_BRONZE_PATH_HERE').head())"
 ```
 
-## Connect Supabase and prove repeatability
+## Inspect SQLite and prove repeatability
 
-1. Create a Supabase project and save its database password privately. In **SQL Editor**, run the complete [schema](sql/schema.sql).
-2. Use **Connect** to copy the PostgreSQL URI. Choose the **Session pooler** for an IPv4-only client or **Direct connection** when your client has IPv6 access. Replace the password placeholder with your URL-encoded database password and add `?sslmode=require` (use `&` if the URI already has query parameters). With the Supabase CA installed, `verify-full` also checks server identity.
-3. Save the URI as `DATABASE_URL` in your ignored `.env`. The app uses the PostgreSQL connection string from Connect. [Supabase connection instructions](https://supabase.com/docs/guides/database/connecting-to-postgres)
-4. Execute the same fixture window twice and compare counts. The `--require-db` flag makes a missing connection string an error.
+The local run creates `data/market_data.sqlite3` automatically. SQLite ships with Python and stores the tables in that file. The notebook's Section 5 runs a SQL join to show the stored prices and features. You can also open the file in a SQLite viewer.
 
 ```sh
-uv run market-data run --source fixture --require-db
+uv run market-data run --source fixture
 uv run market-data counts --source fixture
-uv run market-data run --source fixture --require-db
+uv run market-data run --source fixture
 uv run market-data counts --source fixture
 ```
 
-Both count checks should show:
+Both count checks should show 30 rows and 30 distinct keys in each table for `XAUUSD-DEMO`. Each rerun makes a new Bronze snapshot. Silver and Gold update existing keys.
 
-```text
-XAUUSD-DEMO
-table             rows  distinct_keys
-market_prices       30             30
-market_features     30             30
-```
-
-Use [the verification queries](sql/verify.sql) in SQL Editor to see the counts and join Gold to Silver. Reruns produce new raw snapshots and refresh database timestamps. The two table keys and row counts stay stable for the same data.
+Set `SQLITE_DB_PATH` to use another local file, or pass `--skip-db` to preview without writing either table. For an explicit PostgreSQL connection test, configure `DATABASE_URL` in the ignored `.env` and use `--require-db`. For the hosted path, follow the [Supabase and Prefect Secret block setup](docs/DEPLOYMENT.md#create-the-supabase-secret-block).
 
 ## Run live and repair historical ranges
 
@@ -99,8 +90,8 @@ The default live ticker is Yahoo's gold futures series, `GC=F`. During verificat
 # Recent history with the default gold futures ticker
 uv run market-data run --source yfinance --skip-db
 
-# Explicit date range for gold futures, with a database configured
-uv run market-data backfill --source yfinance --symbol 'GC=F' --start-date 2025-01-06 --end-date 2025-02-15 --require-db
+# Explicit date range for gold futures, saved to local SQLite
+uv run market-data backfill --source yfinance --symbol 'GC=F' --start-date 2025-01-06 --end-date 2025-02-15
 
 # Catch up that symbol using the stored maximum date and a 7-calendar-day overlap
 uv run market-data catch-up --source yfinance --symbol 'GC=F'
@@ -124,8 +115,8 @@ In terminal 2:
 ```sh
 export PREFECT_API_URL=http://127.0.0.1:4200/api
 export PREFECT_API_KEY=
-uv run market-data run --source fixture --skip-db
-uv run market-data serve --source fixture --skip-db
+uv run market-data run --source fixture
+uv run market-data serve --source fixture
 ```
 
 `PREFECT_API_URL` directs Python and the CLI to the local API. `PREFECT_SERVER_UI_API_URL` directs the browser there, even if your active Prefect profile points to Cloud. These exports apply to the current terminal. In PowerShell, use `$env:PREFECT_API_URL = 'http://127.0.0.1:4200/api'` and `$env:PREFECT_SERVER_UI_API_URL = $env:PREFECT_API_URL` in the server terminal. Open [the local Prefect UI](http://127.0.0.1:4200). Inspect the four task runs. The `workshop-daily` deployment schedules a run at 06:00 Africa/Accra. Keep both processes running. To launch immediately, use **Quick run** in the deployment screen or, from another terminal configured with the same API URL:
@@ -134,7 +125,7 @@ uv run market-data serve --source fixture --skip-db
 uv run prefect deployment run 'historical-ingestion/workshop-daily' --watch
 ```
 
-With a PostgreSQL URI, change the serve command to `uv run market-data serve --source fixture --require-db` to include the database. For daily live catch-up, use `uv run market-data serve --source yfinance --symbol 'GC=F' --incremental`. [Prefect deployment and scheduling docs](https://www.prefect.io/docs/v3/how-to-guides/deployments/create-deployments)
+For daily live catch-up into SQLite, use `uv run market-data serve --source yfinance --symbol 'GC=F' --incremental`. [Prefect deployment and scheduling docs](https://www.prefect.io/docs/v3/how-to-guides/deployments/create-deployments)
 
 ## Checks and deployment
 
@@ -144,9 +135,9 @@ uv run --locked ruff format --check .
 uv run --locked pytest
 ```
 
-Tests are fixture-based and use a local Prefect server. Set `TEST_DATABASE_URL` to a **disposable PostgreSQL database with no `market_data` schema** to include PostgreSQL tests. Those tests create and drop their own schema. GitHub Actions provides disposable PostgreSQL for every check run.
+Tests use fixture data, SQLite, and a local Prefect server. Set `TEST_DATABASE_URL` to a **disposable PostgreSQL database with no `market_data` schema** to include PostgreSQL tests. Those tests create and drop their own schema. GitHub Actions provides disposable PostgreSQL for every check run.
 
-Use `dev` for workshop changes and `main` for releases. Once enabled, a passing push to `main` registers its exact Git commit with Prefect Cloud. A Process worker fetches Yahoo data and writes Silver and Gold to PostgreSQL. The Cloud deployment skips the local Bronze snapshot. See [GitHub and Prefect deployment](docs/DEPLOYMENT.md) for the branches, credentials, and verification commands.
+Use `dev` for workshop changes and `main` for releases. Once enabled, a passing push to `main` registers its exact Git commit with Prefect Cloud. A Process worker fetches Yahoo data and uses a Prefect Secret block to connect to Supabase. The Cloud deployment skips the local Bronze snapshot. See [GitHub and Prefect deployment](docs/DEPLOYMENT.md) for the branches, credentials, and verification commands.
 
 - [60-minute instructor walkthrough](docs/INSTRUCTOR_DEMO.md)
 - [Architecture and ML handoff](docs/ARCHITECTURE.md)

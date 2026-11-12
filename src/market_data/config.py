@@ -9,6 +9,7 @@ from typing import Literal
 from dotenv import load_dotenv
 
 Source = Literal["fixture", "yfinance"]
+Database = Path | str
 FailureDemo = Literal["transient", "invalid"]
 FIXTURE_SYMBOL = "XAUUSD-DEMO"
 FIXTURE_START = date(2025, 1, 6)
@@ -34,14 +35,25 @@ def data_source() -> Source:
     raise ValueError("DATA_SOURCE must be fixture or yfinance.")
 
 
-def database_url() -> str | None:
-    """Read DATABASE_URL without exposing the credential.
+def database_target(require_postgres: bool = False) -> Database:
+    """Choose the local SQLite file or an explicitly requested PostgreSQL database.
+
+    Args:
+        require_postgres: Use DATABASE_URL for a direct PostgreSQL test.
 
     Returns:
-        The configured PostgreSQL connection string, or None when unset or empty.
+        A Path for SQLite or a connection string for PostgreSQL.
+
+    Raises:
+        ValueError: PostgreSQL was requested without a configured DATABASE_URL.
     """
     load_dotenv(".env")
-    return os.getenv("DATABASE_URL") or None
+    if require_postgres:
+        url = os.getenv("DATABASE_URL")
+        if not url:
+            raise ValueError("Set DATABASE_URL to use PostgreSQL directly.")
+        return url
+    return Path(os.getenv("SQLITE_DB_PATH") or "data/market_data.sqlite3").expanduser().resolve()
 
 
 def bronze_directory() -> Path:

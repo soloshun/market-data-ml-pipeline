@@ -4,8 +4,8 @@
 | --- | --- | --- |
 | Source | One download per Yahoo ticker or a packaged synthetic CSV | `ingest.py`, `src/market_data/data/market_sample.csv` |
 | Bronze (local lesson) | Preserve provider fields, including adjusted close when present, and attach ticker, source and ingestion time | Local Parquet under `ingest_date=YYYY-MM-DD/symbol=…/` |
-| Silver | Validate, sort and retain typed daily OHLCV | `validate.py`, `market_data.market_prices` |
-| Gold | Calculate daily percent return, trailing means and volatility | `transform.py`, `market_data.market_features` |
+| Silver | Validate, sort and retain typed daily OHLCV | `validate.py`, `market_prices` |
+| Gold | Calculate daily percent return, trailing means and volatility | `transform.py`, `market_features` |
 
 The source adapter unwraps pandas' date index and, if present, the requested ticker from a two-level column index. It then hands the data to Polars. Bronze preserves the provider fields after this structural normalization. Polars converts dates to session calendar dates, sorts by symbol and date, and rejects a batch with missing fields, out-of-window dates, invalid OHLCV or duplicate keys. An invalid batch can leave Bronze available for investigation. Silver and Gold for that run are unwritten.
 
@@ -18,7 +18,7 @@ The source adapter unwraps pandas' date index and, if present, the requested tic
 | 3. [ingest.py](../src/market_data/ingest.py) | Follow `read_fixture`, then `save_snapshot`. Open `normalize_yahoo` when comparing live data with the fixture. |
 | 4. [validate.py](../src/market_data/validate.py) | Read `validate_prices` from required fields through type conversion, row checks, and sorting. |
 | 5. [transform.py](../src/market_data/transform.py) | Read `build_features` and use `shift(1)` to identify where the previous close comes from. |
-| 6. [storage.py](../src/market_data/storage.py) and [schema.sql](../sql/schema.sql) | Follow `load_market_data` and compare the `ON CONFLICT` key with each primary key. |
+| 6. [storage.py](../src/market_data/storage.py) and [SQLite schema](../src/market_data/data/sqlite_schema.sql) | Follow `load_market_data` and compare the `ON CONFLICT` key with each primary key. |
 | 7. [test_transform.py](../tests/test_transform.py) and [test_idempotency.py](../tests/test_idempotency.py) | Check where warm-up, backfill effects and rollback are asserted. |
 
 ## Orchestration and computation
@@ -47,9 +47,9 @@ Polars computes features using session observations for each symbol. Daily retur
 ```mermaid
 sequenceDiagram
     participant Task as Load task
-    participant DB as PostgreSQL
+    participant DB as SQLite or PostgreSQL
     participant PL as Polars
-    Task->>DB: Begin transaction and lock the symbols
+    Task->>DB: Begin the database transaction
     Task->>DB: Upsert Silver price rows
     Task->>DB: Read complete close history for those symbols
     DB-->>Task: Current and historical closes
@@ -63,13 +63,13 @@ sequenceDiagram
     end
 ```
 
-Both PostgreSQL tables use the same `(symbol, trade_date)` primary key. Gold references Silver with a foreign key. The app submits parameterized upserts, so an existing key gets updated and a new key gets inserted. The database protects the key even if a duplicate reaches it from a separate process.
+Both tables in each database use the same `(symbol, trade_date)` primary key. Gold references Silver with a foreign key. The app submits parameterized upserts, so an existing key gets updated and a new key gets inserted. The database protects the key even if a duplicate reaches it from a separate process.
 
-The load task holds one database connection. It locks the affected symbols in a consistent order, writes Silver, reads the complete stored close history for those symbols, recomputes Gold, and commits both tables together. A short backfill can change a later return or moving average. The full-history rebuild handles this and is easy to follow for daily workshop data. It costs more as history grows. Preview features use only the fetched window, so values near its beginning may differ from Gold stored in PostgreSQL.
+The load task holds one database connection. It writes Silver, reads the stored close history for those symbols, recomputes Gold, and commits both tables together. SQLite uses one writer at a time. PostgreSQL uses per-symbol locks so runs for independent symbols can write concurrently. A short backfill can change a later return or moving average. The full-history rebuild handles this and is easy to follow for daily workshop data. It costs more as history grows. Preview features use only the fetched window, so values near its beginning may differ from Gold stored in the database.
 
-The load transaction covers both PostgreSQL tables. Local Parquet snapshots are written earlier and can survive database failure. Symbol locks coordinate writers using this pipeline. If two successful runs carry different source values for the same key, the later transaction can overwrite the earlier one. This is a latest-value dataset. Rerun timestamps and Bronze filenames change by design.
+The transaction covers both Silver and Gold in either database. Local Parquet snapshots are written earlier and can survive database failure. PostgreSQL symbol locks coordinate writers using this pipeline. If two successful runs carry different source values for the same key, the later transaction can overwrite the earlier one. This is a latest-value dataset. Rerun timestamps and Bronze filenames change by design.
 
-Local runs keep the optional Parquet snapshot under `BRONZE_DIR`. The hosted configuration fetches fresh Yahoo Finance rows and sends them straight to validation. Silver is its first stored layer. To replay the exact original provider response in a later hosted version, add durable object storage for Bronze.
+Local runs keep the optional Parquet snapshot under `BRONZE_DIR`. The hosted configuration fetches fresh Yahoo Finance rows and sends them straight to validation. Silver is its first stored layer. The worker loads the Supabase URI from the Prefect Secret block named in the deployment parameters. To replay the exact original provider response in a later hosted version, add durable object storage for Bronze.
 
 ## Handoff to the ML workshop
 

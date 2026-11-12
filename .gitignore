@@ -224,6 +224,7 @@ __marimo__/
 !.env.example
 .prefect/
 data/bronze/
+data/*.sqlite3*
 
 # Local implementation brief and instructor notes
 /CODEX_IMPLEMENTATION_BRIEF.md

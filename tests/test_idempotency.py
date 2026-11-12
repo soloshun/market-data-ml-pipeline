@@ -1,4 +1,6 @@
 import os
+import sqlite3
+from contextlib import closing
 from datetime import date
 from pathlib import Path
 
@@ -10,11 +12,13 @@ from market_data.config import FIXTURE_END, FIXTURE_START, FIXTURE_SYMBOL
 from market_data.ingest import read_fixture
 from market_data.validate import validate_prices
 
-pytestmark = pytest.mark.postgres
 
+@pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])
+def database(request, tmp_path):
+    if request.param == "sqlite":
+        yield tmp_path / "workshop.sqlite3"
+        return
 
-@pytest.fixture
-def database():
     url = os.getenv("TEST_DATABASE_URL")
     if not url:
         pytest.skip("Set TEST_DATABASE_URL to a disposable PostgreSQL database.")
@@ -50,14 +54,22 @@ def test_repeat_upserts_preserve_counts_and_backfill_updates_later_features(data
 
     revised = prices.head(1).with_columns((pl.col("close") + 1).alias("close"))
     assert storage.load_market_data(database, revised, "fixture") == 30
-    with storage.connect(database) as connection:
-        saved_return = connection.execute(
-            """
-            SELECT daily_return FROM market_data.market_features
-            WHERE symbol = %s AND trade_date = %s
-            """,
-            (FIXTURE_SYMBOL, prices["trade_date"][1]),
-        ).fetchone()[0]
+    second_date = prices["trade_date"][1]
+    if isinstance(database, Path):
+        with closing(sqlite3.connect(database)) as connection:
+            saved_return = connection.execute(
+                "SELECT daily_return FROM market_features WHERE symbol = ? AND trade_date = ?",
+                (FIXTURE_SYMBOL, second_date.isoformat()),
+            ).fetchone()[0]
+    else:
+        with storage.connect(database) as connection:
+            saved_return = connection.execute(
+                """
+                SELECT daily_return FROM market_data.market_features
+                WHERE symbol = %s AND trade_date = %s
+                """,
+                (FIXTURE_SYMBOL, second_date),
+            ).fetchone()[0]
     assert saved_return == pytest.approx((prices["close"][1] / revised["close"][0] - 1) * 100)
 
 

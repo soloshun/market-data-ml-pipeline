@@ -1,6 +1,7 @@
 """Workshop commands. Run market-data --help for options."""
 
 import argparse
+import sqlite3
 import sys
 from datetime import date
 
@@ -40,10 +41,14 @@ def make_parser() -> argparse.ArgumentParser:
             command.add_argument("--end-date", type=date.fromisoformat, required=name == "backfill")
         if name == "catch-up":
             command.add_argument("--end-date", type=date.fromisoformat)
+        database_flags = command.add_mutually_exclusive_group()
+        database_flags.add_argument(
+            "--require-db", action="store_true", help="Use PostgreSQL from DATABASE_URL."
+        )
         if name in {"run", "backfill", "serve"}:
-            write = command.add_mutually_exclusive_group()
-            write.add_argument("--skip-db", action="store_true", help="Preview without PostgreSQL.")
-            write.add_argument("--require-db", action="store_true", help="Fail without PostgreSQL.")
+            database_flags.add_argument(
+                "--skip-db", action="store_true", help="Preview without writing to the database."
+            )
         if name == "serve":
             command.add_argument("--incremental", action="store_true", help="Catch up daily.")
         if name == "run":
@@ -61,7 +66,7 @@ def main() -> int:
     args = make_parser().parse_args()
     try:
         return run_command(args)
-    except (ValueError, TransientFetchError, psycopg.Error) as exc:
+    except (ValueError, TransientFetchError, sqlite3.Error, psycopg.Error) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
@@ -78,21 +83,20 @@ def run_command(args: argparse.Namespace) -> int:
     source = args.source or config.data_source()
     symbols = config.resolve_symbols(source, args.symbol)
     if args.command == "counts":
-        url = config.database_url()
-        if not url:
-            raise ValueError("Set DATABASE_URL before checking database counts.")
+        database = config.database_target(require_postgres=args.require_db)
+        print(f"Database: {database}" if not args.require_db else "Database: PostgreSQL")
         print("table             rows  distinct_keys")
         for symbol in symbols:
             print(symbol)
-            for table, rows, keys in storage.row_counts(url, symbol):
+            for table, rows, keys in storage.row_counts(database, symbol):
                 print(f"{table:17} {rows:4}  {keys:13}")
         return 0
 
     if args.command == "serve":
         if args.incremental and args.skip_db:
             raise ValueError("Incremental schedules need a database.")
-        if (args.incremental or args.require_db) and not config.database_url():
-            raise ValueError("Set DATABASE_URL before serving this deployment.")
+        if args.require_db:
+            config.database_target(require_postgres=True)
         ingest_historical_prices.serve(
             name="workshop-daily",
             schedules=[Cron("0 6 * * *", timezone="Africa/Accra")],
@@ -115,14 +119,15 @@ def run_command(args: argparse.Namespace) -> int:
         end_date=args.end_date,
         incremental=args.command == "catch-up",
         skip_db=getattr(args, "skip_db", False),
-        require_db=getattr(args, "require_db", False),
+        require_db=args.require_db,
         demo_failure=getattr(args, "demo_failure", None),
     )
     print(f"Prepared {prices.height} Silver rows and {features.height} Gold preview rows.")
     if loaded is None:
-        print("PostgreSQL skipped.")
+        print("Database skipped.")
     else:
-        print(f"PostgreSQL committed {loaded[0]} Silver and {loaded[1]} Gold upserts.")
+        database_name = "PostgreSQL" if args.require_db else "SQLite"
+        print(f"{database_name} committed {loaded[0]} Silver and {loaded[1]} Gold upserts.")
     for symbol in symbols:
         print(f"Gold preview for {symbol}, calculated within the fetched window:")
         print(features.filter(features["symbol"] == symbol).tail(5))
