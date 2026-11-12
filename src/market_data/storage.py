@@ -3,7 +3,7 @@
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from importlib.resources import files
 from pathlib import Path
 
@@ -31,6 +31,15 @@ UPSERT_FEATURES = """
         daily_return = EXCLUDED.daily_return, sma_5 = EXCLUDED.sma_5,
         sma_20 = EXCLUDED.sma_20, volatility_5 = EXCLUDED.volatility_5,
         computed_at = CURRENT_TIMESTAMP
+"""
+UPSERT_HOURLY = """
+    INSERT INTO {table}
+        (symbol, bar_start_utc, open, high, low, close, volume, source)
+    VALUES ({values})
+    ON CONFLICT (symbol, bar_start_utc) DO UPDATE SET
+        open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+        close = EXCLUDED.close, volume = EXCLUDED.volume,
+        source = EXCLUDED.source, ingested_at = CURRENT_TIMESTAMP
 """
 
 
@@ -191,3 +200,47 @@ def row_counts(database: Database, symbol: str) -> list[tuple[str, int, int]]:
             (symbol, symbol),
         )
         return cursor.fetchall()
+
+
+def latest_hourly_bar(database: Database, symbol: str) -> datetime | None:
+    """Read the hourly watermark for one ticker.
+
+    Args:
+        database: SQLite file path or PostgreSQL connection string.
+        symbol: Ticker to look up in the hourly Silver table.
+
+    Returns:
+        Latest stored bar start in UTC, or None for an empty ticker.
+    """
+    table = _table(database, "hourly_prices")
+    with _database_cursor(database) as cursor:
+        cursor.execute(
+            f"SELECT max(bar_start_utc) FROM {table} WHERE symbol = {_placeholders(database)}",
+            (symbol,),
+        )
+        latest = cursor.fetchone()[0]
+    if isinstance(latest, str):
+        latest = datetime.fromisoformat(latest)
+    return latest.astimezone(UTC) if latest is not None else None
+
+
+def load_hourly_prices(database: Database, prices: pl.DataFrame, source: Source) -> int:
+    """Upsert hourly bars in their own table without changing the daily data.
+
+    Args:
+        database: SQLite file path or PostgreSQL connection string.
+        prices: Validated hourly bars in the storage column order.
+        source: Source label to store alongside each bar.
+
+    Returns:
+        Number of rows upserted.
+    """
+    table = _table(database, "hourly_prices")
+    if isinstance(database, Path):
+        prices = prices.with_columns(pl.col("bar_start_utc").dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    with _database_cursor(database) as cursor:
+        cursor.executemany(
+            UPSERT_HOURLY.format(table=table, values=_placeholders(database, 8)),
+            [(*row, source) for row in prices.iter_rows()],
+        )
+    return prices.height

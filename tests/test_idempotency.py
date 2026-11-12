@@ -7,10 +7,10 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from market_data import storage
+from market_data import hourly, storage
 from market_data.config import FIXTURE_END, FIXTURE_START, FIXTURE_SYMBOL
 from market_data.ingest import read_fixture
-from market_data.validate import validate_prices
+from market_data.validate import validate_hourly_prices, validate_prices
 
 
 @pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])
@@ -84,3 +84,28 @@ def test_gold_error_rolls_back_silver(database, prices, monkeypatch):
         ("market_prices", 0, 0),
         ("market_features", 0, 0),
     ]
+
+
+def test_hourly_storage_replaces_a_bar_with_the_same_utc_key(database):
+    start, end = hourly.FIXTURE_START, hourly.FIXTURE_END
+    bars = validate_hourly_prices(
+        hourly.read_hourly_fixture(start, end), FIXTURE_SYMBOL, start, end
+    )
+    assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) is None
+    assert storage.load_hourly_prices(database, bars, "fixture") == 12
+    revised = bars.head(1).with_columns(pl.col("close") + 1)
+    assert storage.load_hourly_prices(database, revised, "fixture") == 1
+    assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) == bars["bar_start_utc"][-1]
+    if isinstance(database, Path):
+        with closing(sqlite3.connect(database)) as conn:
+            count, first_close = conn.execute(
+                "SELECT count(*), (SELECT close FROM hourly_prices ORDER BY bar_start_utc LIMIT 1) "
+                "FROM hourly_prices"
+            ).fetchone()
+    else:
+        with storage.connect(database) as conn:
+            count, first_close = conn.execute(
+                "SELECT count(*), (SELECT close FROM market_data.hourly_prices "
+                "ORDER BY bar_start_utc LIMIT 1) FROM market_data.hourly_prices"
+            ).fetchone()
+    assert count == 12 and first_close == revised["close"][0]

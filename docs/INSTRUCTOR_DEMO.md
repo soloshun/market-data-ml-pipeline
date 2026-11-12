@@ -103,8 +103,8 @@ Open each run in Prefect. The first fails on attempt one, retries, and completes
 
 ## Cloud follow-up: PR, schedule, and failure alert
 
-1. Open the PR from `dev` to `main`. Show the name change in `prefect.yaml` and the matching name in the GitHub Actions command. Merge when ready. Watch **checks** then **deploy** in GitHub Actions. Open `historical-ingestion/daily-market-data` in Prefect Cloud and compare its version with the commit on `main`. The previous deployment stays visible and should remain paused.
-2. Show the schedule in Prefect and find the matching cron expression in `prefect.yaml`. Run the [live verification command](DEPLOYMENT.md#6-verify-one-fixture-run-and-one-live-run) so the class doesn't have to wait. Find the `Catch-up` line in the logs, then compare `trade_date` and `ingested_at` in Supabase.
+1. Before the merge, run the updated [schema](../sql/schema.sql) in Supabase SQL Editor. It adds the hourly table. Open the PR from `dev` to `main`. Show both deployment names in `prefect.yaml` and the GitHub Actions command. Merge when ready. Watch **checks** then **deploy**, and compare the deployment versions in Prefect Cloud with the commit on `main`. Leave both daily schedules paused.
+2. Show the hourly schedule at **00:00, 06:00, 12:00, and 18:00 Accra**. Start the [hourly backfill](DEPLOYMENT.md#8-collect-hourly-gold-bars) so the class doesn't have to wait. In [the hourly flow](../src/market_data/flows/hourly_ingestion.py), trace the latest saved hour, the exclusive cutoff, and the three tasks. Use the Supabase query to compare `bar_start_utc` (when the bar started) with `ingested_at` (when the pipeline wrote it).
 3. Optional alert: In Prefect Cloud, open **Automations** and add a **Flow run state** trigger for **Failed**, with the single flow run tag `classroom-alert-demo`. Choose **Send an email notification**, if available in your workspace, and enter your own test inbox. Save and enable it. The tag keeps the classroom alert scoped to the test run.
 4. From the Cloud terminal, schedule the following one-off run a minute ahead. Show it enter **Scheduled**, then open the logs once it reaches **Failed**. The fixture intentionally omits the `High` column; the run skips Bronze and makes no database writes.
 
@@ -115,6 +115,8 @@ Open each run in Prefect. The first fails on attempt one, retries, and completes
    ```
 
 5. Check the automation activity and your inbox, then pause the demo automation. If email isn't available, use the run's Failed state and logs to teach how the trigger would work.
+
+For the later ML session, a 12:00 checkpoint can use completed bars to predict a price or return at 18:00. Four evenly spaced checkpoints keep the horizon at six hours, including 18:00 to midnight. Skip examples where the target hour has no market bar. The hourly table stores observations only; target construction, the time-based split, and model training come later.
 
 [Prefect automation setup](https://www.prefect.io/docs/v3/how-to-guides/automations/creating-automations) · [Prefect email notifications](https://www.prefect.io/docs/v3/concepts/automations#sending-notifications-with-automations)
 

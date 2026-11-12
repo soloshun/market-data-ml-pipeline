@@ -80,4 +80,5 @@ jobs:
             echo "::error::Set the PREFECT_API_KEY GitHub Actions secret."
             exit 1
           fi
-          uv run --locked --no-dev prefect deploy --prefect-file ../prefect.yaml --name daily-market-data --no-prompt
+          uv run --locked --no-dev prefect deploy --prefect-file ../prefect.yaml \
+            --name daily-market-data --name hourly-gold-bars --no-prompt

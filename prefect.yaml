@@ -20,7 +20,7 @@ deployments:
       require_db: true
       database_secret_block: market-data-supabase-url
       write_bronze: false
-    work_pool:
+    work_pool: &managed_pool
       name: market-data-ml
       job_variables:
         image: prefecthq/prefect:3-python3.12
@@ -40,3 +40,17 @@ deployments:
       - cron: "0 6 * * *"
         timezone: Africa/Accra
         active: false # Enable after the fixture and live runs pass in your workspace.
+  - name: hourly-gold-bars
+    version: "{{ $PREFECT_CODE_REVISION }}"
+    entrypoint: market_data/flows/hourly_ingestion.py:ingest_hourly_gold
+    description: Collect completed GC=F hourly bars at six-hour checkpoints.
+    parameters:
+      source: yfinance
+      require_db: true
+      database_secret_block: market-data-supabase-url
+    work_pool: *managed_pool
+    concurrency_limit: 1
+    schedules:
+      - cron: "0 */6 * * *"
+        timezone: Africa/Accra
+        active: true # Pause in Prefect after the classroom trial.

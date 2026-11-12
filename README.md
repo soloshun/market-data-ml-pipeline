@@ -171,6 +171,8 @@ Tests use fixture data, SQLite, and a local Prefect server. Set `TEST_DATABASE_U
 
 Use `dev` for workshop changes and `main` for releases. Once enabled, a passing push to `main` registers its exact Git commit as `historical-ingestion/daily-market-data` in Prefect Cloud. The Prefect Managed pool runs the flow, which fetches Yahoo data and uses a Prefect Secret block to connect to Supabase. The Cloud deployment skips the local Bronze snapshot. See [GitHub and Prefect deployment](docs/DEPLOYMENT.md) for the branches, credentials, and verification commands.
 
+The [hourly follow-up](docs/DEPLOYMENT.md#8-collect-hourly-gold-bars) adds a separate flow and table for gold futures. Start locally with `uv run market-data hourly`: it loads 12 synthetic bars into SQLite and prints their UTC timestamps. The Cloud deployment collects Yahoo's completed one-hour bars every six hours.
+
 - [60-minute instructor walkthrough](docs/INSTRUCTOR_DEMO.md)
 - [Architecture and ML handoff](docs/ARCHITECTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
