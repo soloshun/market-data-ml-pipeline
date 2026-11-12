@@ -86,7 +86,7 @@ uv run market-data run --source fixture --skip-db --demo-failure transient
 uv run market-data run --source fixture --skip-db --demo-failure invalid
 ```
 
-Open each run in Prefect. The first fails on attempt one, retries, and completes. The second writes Bronze and then fails validation with a missing `High` column. The load task never starts. Point students to notebook Section 7 for an optional pandas and Polars timing exercise. Show [the assignment and rubric](STUDENT_ASSIGNMENT.md) and ask students to choose a source and a record key.
+Open each run in Prefect. The first fails on attempt one, retries, and completes. The second writes Bronze and then fails validation with a missing `High` column. The load task never starts. For an optional follow-up, point students to notebook Section 7 to see how Polars plans a larger Parquet query. Show [the assignment and rubric](STUDENT_ASSIGNMENT.md) and ask students to choose a source and a record key.
 
 ## Prefect terms for the workshop
 

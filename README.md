@@ -16,7 +16,7 @@ flowchart LR
 
 ## Start reading here
 
-Open [the historical ingestion notebook](notebooks/01_historical_ingestion.ipynb) to run the lesson cell by cell. It links to the functions it calls, shows two Matplotlib charts, and ends with a small pandas and Polars timing exercise.
+Open [the historical ingestion notebook](notebooks/01_historical_ingestion.ipynb) to run the lesson cell by cell. It links to the functions it calls, shows two Matplotlib charts, and includes an optional exercise on how Polars filters and summarizes Parquet.
 
 ```sh
 uv sync --locked --group notebook
