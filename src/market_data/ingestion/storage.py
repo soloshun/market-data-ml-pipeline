@@ -1,7 +1,7 @@
 """Load Silver and Gold in one transaction in SQLite or PostgreSQL."""
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import closing, contextmanager
 from datetime import UTC, date, datetime
 from importlib.resources import files
@@ -70,7 +70,7 @@ def connect(url: str) -> psycopg.Connection:
 
 
 @contextmanager
-def _database_cursor(database: Database) -> Iterator[sqlite3.Cursor | psycopg.Cursor]:
+def _database_cursor(database: Database) -> Generator[sqlite3.Cursor | psycopg.Cursor, None, None]:
     """Open the selected database and manage its transaction and connection lifetime."""
     if isinstance(database, Path):
         database.parent.mkdir(parents=True, exist_ok=True)

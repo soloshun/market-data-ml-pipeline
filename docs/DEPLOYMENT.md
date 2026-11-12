@@ -165,7 +165,7 @@ uv run --locked prefect deployment schedule pause 'hourly-ingestion/hourly-gold-
 uv run --locked prefect deployment schedule resume 'hourly-ingestion/hourly-gold-bars' --all
 ```
 
-Resume before the next Accra checkpoint you want to observe. The following run catches up from the latest saved bar. You can start a manual run while the schedule is paused. A release reapplies the `active` value in `prefect.yaml`, so check the schedule after deploying.
+Resume before the next Accra checkpoint you want to observe. If the last successful run was Thursday and you resume before Tuesday at 06:00, the next run fetches from 24 hours before the last stored bar through Tuesday's cutoff. That includes available Friday and Monday bars and the Sunday evening session. The upserts update any bars already present in the overlap. You can start a manual run while the schedule is paused. A release reapplies the `active` value in `prefect.yaml`, so check the schedule after deploying.
 
 [Yahoo Finance interval and cutoff options](https://ranaroussi.github.io/yfinance/reference/api/yfinance.download.html)
 
