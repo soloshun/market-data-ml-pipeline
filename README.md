@@ -169,7 +169,7 @@ uv run --locked pytest
 
 Tests use fixture data, SQLite, and a local Prefect server. Set `TEST_DATABASE_URL` to a **disposable PostgreSQL database with no `market_data` schema** to include PostgreSQL tests. Those tests create and drop their own schema. GitHub Actions provides disposable PostgreSQL for every check run.
 
-Use `dev` for workshop changes and `main` for releases. Once enabled, a passing push to `main` registers its exact Git commit with Prefect Cloud. The Prefect Managed pool runs the flow, which fetches Yahoo data and uses a Prefect Secret block to connect to Supabase. The Cloud deployment skips the local Bronze snapshot. See [GitHub and Prefect deployment](docs/DEPLOYMENT.md) for the branches, credentials, and verification commands.
+Use `dev` for workshop changes and `main` for releases. Once enabled, a passing push to `main` registers its exact Git commit as `historical-ingestion/daily-market-data` in Prefect Cloud. The Prefect Managed pool runs the flow, which fetches Yahoo data and uses a Prefect Secret block to connect to Supabase. The Cloud deployment skips the local Bronze snapshot. See [GitHub and Prefect deployment](docs/DEPLOYMENT.md) for the branches, credentials, and verification commands.
 
 - [60-minute instructor walkthrough](docs/INSTRUCTOR_DEMO.md)
 - [Architecture and ML handoff](docs/ARCHITECTURE.md)

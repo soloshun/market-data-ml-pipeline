@@ -91,17 +91,19 @@ GitHub uses its API key to register the deployment. At runtime the flow reads th
 1. Confirm that **Work Pools** in Prefect Cloud shows `market-data-ml` (or your own pool name) as a **Prefect Managed** pool and that it is not paused. Prefect runs the flow for you; no terminal or worker needs to stay open.
 2. Push to `dev` and let **Verify and deploy → checks** finish. Review and merge a pull request from `dev` into `main`.
 3. Open GitHub **Actions → Verify and deploy** and select the new run for `main`. Confirm both **checks** and **deploy** passed. If you enabled deployment after the merge, use **Run workflow** on `main` or push a new commit to `main`.
-4. Open **Deployments** in your Prefect workspace. Look for `historical-ingestion/workshop-cloud` and confirm the version is the commit on `main`.
+4. Open **Deployments** in your Prefect workspace. Look for `historical-ingestion/daily-market-data` and confirm the version is the commit on `main`.
 
 When a run starts, the managed pool installs the packages listed under `work_pool.job_variables.pip_packages` and clones the exact commit. If you change the project's runtime dependencies, update the matching pins in `prefect.yaml` alongside `uv.lock`. A public repository can be cloned as configured; for a private copy, configure [authenticated code retrieval](https://www.prefect.io/docs/v3/how-to-guides/deployments/store-flow-code).
+
+If your workspace already has `historical-ingestion/workshop-cloud`, keep its schedule paused. Prefect registers the new name as a separate deployment; the old one stays visible with its run history. Point any links or automations you still use at `daily-market-data`.
 
 ## 6. Verify one fixture run and one live run
 
 Run these commands from a terminal pointed at the Cloud workspace.
 
 ```sh
-uv run --locked prefect deployment inspect 'historical-ingestion/workshop-cloud'
-uv run --locked prefect deployment run 'historical-ingestion/workshop-cloud' \
+uv run --locked prefect deployment inspect 'historical-ingestion/daily-market-data'
+uv run --locked prefect deployment run 'historical-ingestion/daily-market-data' \
   --params '{"source":"fixture","incremental":false}' --watch
 ```
 
@@ -110,13 +112,14 @@ Check that the deployment version matches the GitHub commit SHA. The run should 
 Then try the deployment defaults, which catch up live Yahoo Finance data for `GC=F`.
 
 ```sh
-uv run --locked prefect deployment run 'historical-ingestion/workshop-cloud' --watch
+uv run --locked prefect deployment run 'historical-ingestion/daily-market-data' --watch
 ```
 
 In the run log, find the latest stored date and the requested start and end dates. To see the watermark the next run will use, run this in Supabase SQL Editor:
 
 ```sql
-SELECT symbol, count(*) AS rows, max(trade_date) AS latest_date
+SELECT symbol, count(*) AS rows, max(trade_date) AS latest_trade_date,
+       max(ingested_at) AS latest_write
 FROM market_data.market_prices
 WHERE symbol = 'GC=F'
 GROUP BY symbol;
@@ -124,10 +127,12 @@ GROUP BY symbol;
 
 ## 7. Understand the daily catch-up
 
-In [`prefect.yaml`](../prefect.yaml), `incremental: true` makes every default Cloud run read the last committed trade date per ticker from Supabase. The deployment requests Yahoo Finance data through yesterday UTC. An empty table starts with the prior 60 calendar days. After that, each run rereads seven calendar days ending on the last committed date, then fetches everything available after it through the same cutoff.
+The schedule tells Prefect **when to run**. The data window tells Yahoo Finance **which dates to return**. A default manual run on November 17 uses November 17 UTC as the exclusive end date, so it can ingest November 16's bar if Yahoo has published it. Weekends, market holidays, or a delayed provider can leave the latest trade date earlier. In Supabase, `trade_date` is the market session date; `ingested_at` records when the price row was last written.
+
+In [`prefect.yaml`](../prefect.yaml), `incremental: true` makes every default Cloud run read the last committed trade date per ticker from Supabase. A ticker with no rows starts with the prior 60 calendar days. After that, each run rereads seven calendar days ending on the last committed date, then fetches everything available after it through the same cutoff. For example, if the last stored date is November 13, the November 17 run requests `[November 7, November 17)`. It upserts existing dates and adds any missing sessions through November 16.
 
 For example, if several scheduled runs fail, the saved date stays where it was. When the next run starts, its later cutoff covers the missing sessions. Upserts update overlapping keys, and both tables commit together. Older holes inside already loaded history need a manual backfill. Try the [same recovery with a local fixture](../README.md#practice-catch-up-after-missed-runs).
 
-The deployment schedules one run at **06:00 Africa/Accra** when active. It starts paused. After the manual fixture and live runs succeed, change `active: false` to `active: true` in `prefect.yaml` on `dev` and merge when you're ready to schedule it. A student's copy can change the work pool and Secret block names in the same file to match their workspace.
+The recurring schedule starts paused. After the manual fixture and live runs succeed, set `active: true` in `prefect.yaml` on `dev` and merge when you're ready to schedule it. For a one-off scheduled run during class, use the [instructor's Cloud follow-up](INSTRUCTOR_DEMO.md#cloud-follow-up-pr-schedule-and-failure-alert).
 
 [Prefect Managed work pools](https://www.prefect.io/docs/v3/how-to-guides/deployment_infra/managed) · [Prefect YAML deployments](https://www.prefect.io/docs/v3/how-to-guides/deployments/prefect-yaml)

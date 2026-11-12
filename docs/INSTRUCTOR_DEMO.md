@@ -25,7 +25,7 @@ Start with the [historical ingestion notebook](../notebooks/01_historical_ingest
    ```
 
    For PowerShell and connection checks, see [local Prefect setup](../README.md#prefect-ui-and-local-daily-schedule).
-5. If demonstrating GitHub deployment, prepare the [Cloud workspace, Process pool, worker and branches](DEPLOYMENT.md) before class. Open GitHub Actions and the Prefect Cloud deployment screen. Rehearse with a fixture run.
+5. If demonstrating GitHub deployment, prepare the [Cloud workspace, Managed work pool, and branches](DEPLOYMENT.md) before class. Open GitHub Actions and the Prefect Cloud deployment screen. Rehearse with a fixture run.
 
 ## 00–07 · Tour the repository (7 minutes)
 
@@ -73,7 +73,7 @@ uv run market-data serve --source fixture
 
 Keep it running. Show `historical-ingestion/workshop-daily` in Deployments and click **Quick run**. Explain that Prefect schedules run creation, and the serving process executes each run.
 
-If the Cloud setup is ready, show the Secret block name with its value hidden. Trace that name from `prefect.yaml` to `Secret.load(...).get()` in the flow, then show the commit SHA and worker status. Use the [deployment guide](DEPLOYMENT.md) for the full exercise. The local run covers orchestration if Cloud is unavailable.
+If the Cloud setup is ready, show the Secret block name with its value hidden. Trace that name from `prefect.yaml` to `Secret.load(...).get()` in the flow, then show the commit SHA and Managed work pool. Use the [deployment guide](DEPLOYMENT.md) for the full exercise. The local run covers orchestration if Cloud is unavailable.
 
 ## 45–52 · Recover missed batches (7 minutes)
 
@@ -100,6 +100,23 @@ Open each run in Prefect. The first fails on attempt one, retries, and completes
 | Manual backfill | An operator chooses an explicit start and end date to load or repair. |
 
 [Prefect task and retry settings](https://reference.prefect.io/prefect/tasks/) · [Prefect cache policies](https://reference.prefect.io/prefect/cache_policies/)
+
+## Cloud follow-up: PR, schedule, and failure alert
+
+1. Open the PR from `dev` to `main`. Show the name change in `prefect.yaml` and the matching name in the GitHub Actions command. Merge when ready. Watch **checks** then **deploy** in GitHub Actions. Open `historical-ingestion/daily-market-data` in Prefect Cloud and compare its version with the commit on `main`. The previous deployment stays visible and should remain paused.
+2. Show the schedule in Prefect and find the matching cron expression in `prefect.yaml`. Run the [live verification command](DEPLOYMENT.md#6-verify-one-fixture-run-and-one-live-run) so the class doesn't have to wait. Find the `Catch-up` line in the logs, then compare `trade_date` and `ingested_at` in Supabase.
+3. Optional alert: In Prefect Cloud, open **Automations** and add a **Flow run state** trigger for **Failed**, with the single flow run tag `classroom-alert-demo`. Choose **Send an email notification**, if available in your workspace, and enter your own test inbox. Save and enable it. The tag keeps the classroom alert scoped to the test run.
+4. From the Cloud terminal, schedule the following one-off run a minute ahead. Show it enter **Scheduled**, then open the logs once it reaches **Failed**. The fixture intentionally omits the `High` column; the run skips Bronze and makes no database writes.
+
+   ```sh
+   uv run --locked prefect deployment run 'historical-ingestion/daily-market-data' \
+     --flow-run-name classroom-alert-demo --start-in '1 minute' --tag classroom-alert-demo \
+     --params '{"source":"fixture","incremental":false,"skip_db":true,"require_db":false,"database_secret_block":null,"write_bronze":false,"demo_failure":"invalid"}'
+   ```
+
+5. Check the automation activity and your inbox, then pause the demo automation. If email isn't available, use the run's Failed state and logs to teach how the trigger would work.
+
+[Prefect automation setup](https://www.prefect.io/docs/v3/how-to-guides/automations/creating-automations) · [Prefect email notifications](https://www.prefect.io/docs/v3/concepts/automations#sending-notifications-with-automations)
 
 ## Backup routes
 
