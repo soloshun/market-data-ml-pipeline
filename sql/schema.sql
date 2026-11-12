@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS market_data.hourly_prices (
     CHECK ((source = 'fixture') = (symbol = 'XAUUSD-DEMO'))
 );
 
+-- Upgrade existing hourly Silver tables as well as fresh installations.
+ALTER TABLE market_data.hourly_prices ADD COLUMN IF NOT EXISTS _rescued_data jsonb;
+
 CREATE TABLE IF NOT EXISTS market_data.hourly_features (
     symbol text NOT NULL,
     bar_start_utc timestamptz NOT NULL,

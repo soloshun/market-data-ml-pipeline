@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS hourly_prices (
     close REAL NOT NULL CHECK (close > 0 AND close < 1e999),
     volume INTEGER NOT NULL CHECK (volume >= 0),
     source TEXT NOT NULL CHECK (source IN ('fixture', 'yfinance')),
+    _rescued_data TEXT,
     ingested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (symbol, bar_start_utc),
     CHECK (low <= min(open, close) AND high >= max(open, close)),

@@ -1,7 +1,9 @@
+import json
 import os
 import sqlite3
 from contextlib import closing
 from datetime import date
+from importlib.resources import files
 from pathlib import Path
 
 import polars as pl
@@ -92,7 +94,13 @@ def test_hourly_backfill_revises_later_gold_features(database, monkeypatch):
         hourly.read_hourly_fixture(start, end), FIXTURE_SYMBOL, start, end
     )
     assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) is None
-    assert storage.load_hourly_prices(database, bars, "fixture") == (12, 12)
+    with_rescue = bars.with_columns(
+        pl.when(pl.col("bar_start_utc") == start)
+        .then(pl.lit('{"VendorNote":"demo feed"}'))
+        .otherwise(None)
+        .alias("_rescued_data")
+    )
+    assert storage.load_hourly_prices(database, with_rescue, "fixture") == (12, 12)
     revised = bars.head(1).with_columns(pl.col("close") + 1)
     assert storage.load_hourly_prices(database, revised, "fixture") == (1, 12)
     assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) == bars["bar_start_utc"][-1]
@@ -109,13 +117,37 @@ def test_hourly_backfill_revises_later_gold_features(database, monkeypatch):
     connection = closing(sqlite3.connect(database)) if sqlite else storage.connect(database)
     with connection as conn:
         silver = conn.execute(
-            f"SELECT close FROM {prefix}hourly_prices ORDER BY bar_start_utc"
+            f"SELECT close, _rescued_data FROM {prefix}hourly_prices ORDER BY bar_start_utc"
         ).fetchall()
         gold = conn.execute(
             f"SELECT hourly_return, sma_5 FROM {prefix}hourly_features ORDER BY bar_start_utc"
         ).fetchall()
     assert len(silver) == len(gold) == 12
     assert silver[0][0] == revised["close"][0]
+    rescued = json.loads(silver[0][1]) if sqlite else silver[0][1]
+    assert rescued == {"VendorNote": "demo feed"}
+    assert all(payload is None for _, payload in silver[1:])
     assert gold[0] == (None, None)
     assert gold[1][0] == pytest.approx((bars["close"][1] / revised["close"][0] - 1) * 100)
     assert gold[4][1] == pytest.approx(sum(row[0] for row in silver[:5]) / 5)
+
+
+def test_existing_sqlite_hourly_table_gains_rescue_column(tmp_path):
+    database = tmp_path / "existing.sqlite3"
+    schema = files("market_data").joinpath("data/sqlite_schema.sql").read_text()
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.executescript(schema.replace("    _rescued_data TEXT,\n", ""))
+        conn.execute(
+            """
+            INSERT INTO hourly_prices
+                (symbol, bar_start_utc, open, high, low, close, volume, source)
+            VALUES (?, ?, 100, 105, 98, 101, 10, 'fixture')
+            """,
+            (FIXTURE_SYMBOL, hourly.FIXTURE_START.isoformat()),
+        )
+
+    assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) == hourly.FIXTURE_START
+    with closing(sqlite3.connect(database)) as conn:
+        assert conn.execute("SELECT close, _rescued_data FROM hourly_prices").fetchall() == [
+            (101, None)
+        ]

@@ -13,6 +13,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 from market_data.config import Database, Source
 from market_data.ingestion.features import build_features, build_hourly_features
+from market_data.ingestion.validation import HOURLY_KEY, PRICE_COLUMNS
 
 UPSERT_PRICES = """
     INSERT INTO {table}
@@ -33,13 +34,14 @@ UPSERT_FEATURES = """
         computed_at = CURRENT_TIMESTAMP
 """
 UPSERT_HOURLY = """
-    INSERT INTO {table}
-        (symbol, bar_start_utc, open, high, low, close, volume, source)
-    VALUES ({values})
+    INSERT INTO {table} AS saved
+        (symbol, bar_start_utc, open, high, low, close, volume, _rescued_data, source)
+    VALUES ({prices}, CAST({parameter} AS {rescue_type}), {parameter})
     ON CONFLICT (symbol, bar_start_utc) DO UPDATE SET
         open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
         close = EXCLUDED.close, volume = EXCLUDED.volume,
-        source = EXCLUDED.source, ingested_at = CURRENT_TIMESTAMP
+        source = EXCLUDED.source, ingested_at = CURRENT_TIMESTAMP,
+        _rescued_data = COALESCE(EXCLUDED._rescued_data, saved._rescued_data)
 """
 
 
@@ -78,6 +80,15 @@ def _database_cursor(database: Database) -> Generator[sqlite3.Cursor | psycopg.C
             conn.execute("PRAGMA foreign_keys = ON")
             schema = files("market_data").joinpath("data/sqlite_schema.sql").read_text()
             conn.executescript(schema)
+            has_rescue_column = (
+                "SELECT 1 FROM pragma_table_info('hourly_prices') WHERE name = '_rescued_data'"
+            )
+            if conn.execute(has_rescue_column).fetchone() is None:
+                with conn:
+                    # Serialize the upgrade when two processes open an older database.
+                    conn.execute("BEGIN IMMEDIATE")
+                    if conn.execute(has_rescue_column).fetchone() is None:
+                        conn.execute("ALTER TABLE hourly_prices ADD COLUMN _rescued_data TEXT")
             with conn:
                 yield conn.cursor()
     else:
@@ -234,7 +245,7 @@ def load_hourly_prices(database: Database, prices: pl.DataFrame, source: Source)
 
     Args:
         database: SQLite file path or PostgreSQL connection string.
-        prices: Validated hourly bars in the storage column order.
+        prices: Validated hourly bars with the nullable rescued JSON column.
         source: Source label to store alongside each bar.
 
     Returns:
@@ -242,6 +253,7 @@ def load_hourly_prices(database: Database, prices: pl.DataFrame, source: Source)
     """
     if prices.is_empty():
         return 0, 0
+    prices = prices.select(*HOURLY_KEY, *PRICE_COLUMNS, "volume", "_rescued_data")
     symbols = sorted(prices.get_column("symbol").unique().to_list())
     prices_table = _table(database, "hourly_prices")
     features_table = _table(database, "hourly_features")
@@ -255,7 +267,12 @@ def load_hourly_prices(database: Database, prices: pl.DataFrame, source: Source)
                     (f"market_data:hourly:{symbol}",),
                 )
         cursor.executemany(
-            UPSERT_HOURLY.format(table=prices_table, values=_placeholders(database, 8)),
+            UPSERT_HOURLY.format(
+                table=prices_table,
+                prices=_placeholders(database, 7),
+                parameter=_placeholders(database),
+                rescue_type="TEXT" if isinstance(database, Path) else "JSONB",
+            ),
             [(*row, source) for row in prices.iter_rows()],
         )
         # Revisions affect later returns and rolling windows, so use stored Silver history.

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -8,7 +9,7 @@ import pytest
 from prefect.testing.utilities import prefect_test_harness
 
 from market_data.config import FIXTURE_SYMBOL
-from market_data.flows.hourly_ingestion import ingest_hourly_gold
+from market_data.flows import hourly_ingestion
 from market_data.ingestion import hourly, sources, storage
 from market_data.ingestion.validation import validate_hourly_prices
 
@@ -31,7 +32,14 @@ def test_yahoo_hourly_uses_real_timestamps_and_filters_provider_cutoff(monkeypat
     end = start + timedelta(hours=2)
     # A provider response can include the open bar at exactly end.
     index = pd.date_range(start, end, freq="30min").tz_convert("America/New_York")
-    values = {"Open": 100, "High": 105, "Low": 98, "Close": 101, "Volume": 10}
+    values = {
+        "Open": 100,
+        "High": 105,
+        "Low": 98,
+        "Close": 101,
+        "Volume": 10,
+        "VendorNote": ["first", "second", "third", "open bar", "open bar"],
+    }
 
     def download(symbol, **kwargs):
         assert symbol == "GC=F"
@@ -48,6 +56,11 @@ def test_yahoo_hourly_uses_real_timestamps_and_filters_provider_cutoff(monkeypat
         start + timedelta(hours=1),
     ]
     assert bars.schema["bar_start_utc"].time_zone == "UTC"
+    assert [json.loads(value)["VendorNote"] for value in bars["_rescued_data"]] == [
+        "first",
+        "second",
+        "third",
+    ]
     with pytest.raises(ValueError, match="duplicate symbol and hour"):
         validate_hourly_prices(pl.concat([raw, raw.head(1)]), "GC=F", start, end)
 
@@ -57,18 +70,31 @@ def test_fixture_catches_up_after_a_gap_without_duplicate_hours(tmp_path, monkey
     monkeypatch.setenv("SQLITE_DB_PATH", str(database))
     monkeypatch.setenv("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
     initial_end = hourly.FIXTURE_START + timedelta(hours=3)
+
+    def fetch_fixture(start, end):
+        raw = hourly.read_hourly_fixture(start, end)
+        if end == initial_end:
+            return raw.with_columns(pl.lit("demo feed").alias("VendorNote"))
+        return raw
+
+    monkeypatch.setattr(hourly_ingestion, "read_hourly_fixture", fetch_fixture)
     with prefect_test_harness():
-        first = ingest_hourly_gold(end_at=initial_end)
+        first = hourly_ingestion.ingest_hourly_gold(end_at=initial_end)
         assert first.height == 3
+        assert json.loads(first["_rescued_data"][0]) == {"VendorNote": "demo feed"}
         assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) == initial_end - timedelta(
             hours=1
         )
-        recovered = ingest_hourly_gold()
+        recovered = hourly_ingestion.ingest_hourly_gold()
         assert recovered.height == 12
-        assert ingest_hourly_gold().equals(recovered)
+        assert hourly_ingestion.ingest_hourly_gold().equals(recovered)
 
     with closing(sqlite3.connect(database)) as conn:
-        assert conn.execute("SELECT count(*) FROM hourly_prices").fetchone() == (12,)
+        saved = conn.execute(
+            "SELECT _rescued_data FROM hourly_prices ORDER BY bar_start_utc"
+        ).fetchall()
+        assert [json.loads(row[0]) for row in saved[:3]] == [{"VendorNote": "demo feed"}] * 3
+        assert saved[3:] == [(None,)] * 9
         assert conn.execute("SELECT count(*) FROM hourly_features").fetchone() == (12,)
         assert conn.execute("SELECT count(*) FROM market_prices").fetchone() == (0,)
     assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) == hourly.FIXTURE_END - timedelta(

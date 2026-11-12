@@ -30,6 +30,8 @@ Run lint and tests locally before pushing development changes to `dev`. This ver
 
 1. Sign in to the [Supabase Dashboard](https://supabase.com/dashboard). Click **New project**, select your organization, choose a project name and region, set a database password, and click **Create new project**. Save that password privately. You'll need it to complete the connection URI.
 2. When the project is ready, open **SQL Editor → New query**. Copy the full contents of [`sql/schema.sql`](../sql/schema.sql) into the editor and click **Run**. It creates the daily and hourly Silver and Gold tables. If you already set up the daily lesson, rerun this file before merging the hourly release to add the hourly tables.
+
+   If your hourly tables already exist, rerun the schema before releasing the version that writes `_rescued_data`. The schema adds this nullable JSON column to hourly Silver without deleting rows. In **Table Editor → market_data → hourly_prices**, it stays empty for bars with no unfamiliar fields.
 3. In the project header, click **Connect**. In the connection string section, select **URI**, then choose **Session pooler**, which works over IPv4. Copy the connection string as shown.
 4. Replace the password placeholder with the database password. Percent-encode special characters in the password, such as `@` as `%40` and `#` as `%23`. Preserve the host, port and username from **Connect**.
 5. Set `sslmode=require` in the URI. Append `?sslmode=require` when there are no query parameters or `&sslmode=require` when there are existing parameters. If `sslmode` is already set, edit it in place. Paste the completed URI into the Prefect Secret block in the next section.

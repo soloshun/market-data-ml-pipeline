@@ -40,11 +40,22 @@ def fetch_hourly(source: Source, symbol: str, start: datetime, end: datetime) ->
 def validate_hourly_silver(
     raw: pl.DataFrame, symbol: str, start: datetime, end: datetime
 ) -> pl.DataFrame:
-    """Validate the fetched window and log the accepted hourly Silver bars."""
+    """Validate the fetched window and count bars with rescued fields.
+
+    Args:
+        raw: Provider bars with the original column names.
+        symbol: Ticker attached to the Silver rows.
+        start: First included bar start.
+        end: First excluded bar start.
+
+    Returns:
+        Validated Silver bars with nullable rescued JSON.
+    """
     prices = validate_hourly_prices(raw, symbol, start, end)
     get_run_logger().info(
-        "Validated %d hourly Silver bars. Latest bar starts %s.",
+        "Validated %d hourly Silver bars. %d contain rescued fields. Latest bar starts %s.",
         prices.height,
+        prices.height - prices["_rescued_data"].null_count(),
         prices["bar_start_utc"][-1],
     )
     return prices
