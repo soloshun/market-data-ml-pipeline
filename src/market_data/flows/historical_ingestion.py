@@ -6,8 +6,8 @@ from pathlib import Path
 import polars as pl
 from prefect import flow, get_run_logger, task
 from prefect.blocks.system import Secret
+from prefect.cache_policies import NO_CACHE
 from prefect.runtime import task_run
-from prefect.tasks import NO_CACHE
 
 from market_data import config, storage
 from market_data.config import OVERLAP_DAYS, Database, FailureDemo, Source
@@ -200,10 +200,22 @@ def ingest_historical_prices(
     windows = dict.fromkeys(symbols, (start, end))
     if incremental:
         database = _database_target(require_db, database_secret_block)
-        for symbol, latest in storage.latest_dates(database, symbols).items():
-            if latest >= end:
-                raise ValueError(f"{symbol}: stored date {latest} reaches the exclusive end {end}.")
-            windows[symbol] = (latest - timedelta(days=OVERLAP_DAYS - 1), end)
+        latest_dates = storage.latest_dates(database, symbols)
+        logger = get_run_logger()
+        for symbol in symbols:
+            latest = latest_dates.get(symbol)
+            if latest is not None:
+                if latest >= end:
+                    raise ValueError(
+                        f"{symbol}: stored date {latest} reaches the exclusive end {end}."
+                    )
+                windows[symbol] = (latest - timedelta(days=OVERLAP_DAYS - 1), end)
+            logger.info(
+                "Catch-up for %s: latest stored date %s. Fetching [%s, %s), end exclusive.",
+                symbol,
+                latest or "none (initial load)",
+                *windows[symbol],
+            )
 
     batches = fetch_prices(source, windows, demo_failure)
     if write_bronze:

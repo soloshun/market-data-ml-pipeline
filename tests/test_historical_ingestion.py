@@ -63,21 +63,40 @@ def test_fixture_flow_with_retry_and_permanent_validation_failure(tmp_path, monk
         assert loaded == (30, 30)
 
 
-def test_incremental_window_uses_per_symbol_overlap(monkeypatch):
-    monkeypatch.setattr(
-        historical_ingestion.storage,
-        "latest_dates",
-        lambda url, symbols: {FIXTURE_SYMBOL: date(2025, 2, 5)},
-    )
+def test_incremental_run_recovers_missed_batches_and_preserves_keys(tmp_path, monkeypatch):
+    database = tmp_path / "catch-up.sqlite3"
+    monkeypatch.setenv("SQLITE_DB_PATH", str(database))
+    monkeypatch.setenv("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
+    real_read = historical_ingestion.read_fixture
+    windows = []
 
-    def fetch(source, windows, demo_failure):
-        assert source == "fixture"
-        assert windows == {FIXTURE_SYMBOL: (date(2025, 1, 30), FIXTURE_END)}
-        raise RuntimeError("window checked")
+    def record_window(start, end):
+        windows.append((start, end))
+        return real_read(start, end)
 
-    monkeypatch.setattr(historical_ingestion, "fetch_prices", fetch)
-    with pytest.raises(RuntimeError, match="window checked"):
-        historical_ingestion.ingest_historical_prices.fn(source="fixture", incremental=True)
+    monkeypatch.setattr(historical_ingestion, "read_fixture", record_window)
+    with prefect_test_harness():
+        _, _, initial = historical_ingestion.ingest_historical_prices(
+            source="fixture", end_date=date(2025, 1, 18), write_bronze=False, incremental=True
+        )
+        assert initial == (10, 10)
+        assert storage.latest_dates(database, [FIXTURE_SYMBOL]) == {
+            FIXTURE_SYMBOL: date(2025, 1, 17)
+        }
+
+        for expected_start, fetched in [(date(2025, 1, 11), 15), (date(2025, 1, 25), 5)]:
+            _, _, loaded = historical_ingestion.ingest_historical_prices(
+                source="fixture", end_date=date(2025, 2, 1), write_bronze=False, incremental=True
+            )
+            assert windows[-1] == (expected_start, date(2025, 2, 1))
+            assert loaded == (fetched, 20)
+            assert storage.row_counts(database, FIXTURE_SYMBOL) == [
+                ("market_prices", 20, 20),
+                ("market_features", 20, 20),
+            ]
+            assert storage.latest_dates(database, [FIXTURE_SYMBOL]) == {
+                FIXTURE_SYMBOL: date(2025, 1, 31)
+            }
 
 
 def test_default_bounds_and_synthetic_symbol_safety():

@@ -99,6 +99,38 @@ uv run market-data catch-up --source yfinance --symbol 'GC=F'
 
 `--start-date` is inclusive and `--end-date` is exclusive. Live runs default to the prior 60 calendar days through yesterday UTC. Catch-up uses 60 days on first load and overlaps the most recent 7 calendar dates including the last stored date on subsequent runs. Repeat `--symbol` to request multiple Yahoo tickers. Use an explicit backfill when you know an older date range needs repair. Detecting arbitrary gaps requires an exchange calendar that accounts for weekends and holidays. A Prefect schedule creates future runs.
 
+## Practice catch-up after missed runs
+
+The scheduled Cloud deployment uses the same catch-up logic as the local command. At the start of each run, the flow reads the latest committed trade date per ticker from Silver. For live data, the end of the window defaults to today's UTC date, which is excluded. It fetches from six calendar days before the latest saved date through the exclusive end. That gives seven days of overlap, including the saved date, plus every later available session. On the first live load, it requests the preceding 60 calendar days.
+
+Try it with a fresh SQLite file. The commands run in a subshell so your existing workshop database stays available after the exercise.
+
+```sh
+(
+  demo_dir=$(mktemp -d)
+  export SQLITE_DB_PATH="$demo_dir/catch-up.sqlite3"
+  export BRONZE_DIR="$demo_dir/bronze"
+
+  uv run market-data catch-up --source fixture --end-date 2025-01-18
+  uv run market-data counts --source fixture
+
+  # Pretend the worker missed the next two weeks.
+  uv run market-data catch-up --source fixture --end-date 2025-02-01
+  uv run market-data counts --source fixture
+
+  uv run market-data catch-up --source fixture --end-date 2025-02-01
+  uv run market-data counts --source fixture
+)
+```
+
+| Run | Latest date before the run | Requested window, end exclusive | Stored rows per table afterward |
+| --- | --- | --- | ---: |
+| First load | No rows | Jan 6 to Jan 18, 2025 | 10 |
+| Catch up after the outage | Jan 17 | Jan 11 to Feb 1, 2025 | 20 |
+| Repeat with the same end date | Jan 31 | Jan 25 to Feb 1, 2025 | 20 |
+
+The second run fetches 15 fixture sessions, adds 10 missing rows and updates 5 overlapping rows. The third run updates 5 rows and adds zero. If the database transaction fails, its latest committed date stays where it was. Catch-up covers the missing tail after that date. To repair a gap further back in stored history, use the manual backfill command with explicit dates.
+
 ## Prefect UI and local daily schedule
 
 In terminal 1, from the repository root:

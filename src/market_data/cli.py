@@ -52,7 +52,11 @@ def make_parser() -> argparse.ArgumentParser:
         if name == "serve":
             command.add_argument("--incremental", action="store_true", help="Catch up daily.")
         if name == "run":
-            command.add_argument("--demo-failure", choices=["transient", "invalid"])
+            command.add_argument(
+                "--demo-failure",
+                choices=["transient", "invalid"],
+                help="Simulate a retryable timeout or a batch missing a required column.",
+            )
     return parser
 
 

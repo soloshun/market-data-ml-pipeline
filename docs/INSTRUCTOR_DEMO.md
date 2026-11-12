@@ -75,16 +75,9 @@ Keep it running. Show `historical-ingestion/workshop-daily` in Deployments and c
 
 If the Cloud setup is ready, show the Secret block name with its value hidden. Trace that name from `prefect.yaml` to `Secret.load(...).get()` in the flow, then show the commit SHA and worker status. Use the [deployment guide](DEPLOYMENT.md) for the full exercise. The local run covers orchestration if Cloud is unavailable.
 
-## 45–52 · Prove repeatability and show a backfill (7 minutes)
+## 45–52 · Recover missed batches (7 minutes)
 
-```sh
-uv run market-data run --source fixture
-uv run market-data counts --source fixture
-uv run market-data backfill --source fixture --symbol XAUUSD-DEMO --start-date 2025-01-13 --end-date 2025-01-18
-uv run market-data catch-up --source fixture
-```
-
-Expect 30 rows and 30 distinct keys per table after the rerun. The manual backfill fetches five sessions and refreshes Gold from stored history. Catch-up uses the stored maximum and seven calendar dates of overlap. Ask how the class would find an older gap and what a market calendar would add.
+Run the [missed-run exercise](../README.md#practice-catch-up-after-missed-runs) from the project root. Use the latest stored date and the selected end date from the log to explain why the first catch-up increases both tables from 10 rows to 20. Rerun it and show that the same keys are updated. Explain that a manual backfill takes a date range you choose for an older gap inside stored history.
 
 ## 52–60 · Diagnose a failure and assign the exercise (8 minutes)
 
@@ -94,6 +87,19 @@ uv run market-data run --source fixture --skip-db --demo-failure invalid
 ```
 
 Open each run in Prefect. The first fails on attempt one, retries, and completes. The second writes Bronze and then fails validation with a missing `High` column. The load task never starts. Point students to notebook Section 7 for an optional pandas and Polars timing exercise. Show [the assignment and rubric](STUDENT_ASSIGNMENT.md) and ask students to choose a source and a record key.
+
+## Prefect terms for the workshop
+
+| Term | What it means here |
+| --- | --- |
+| Transient failure | A temporary failure such as a network timeout. In the demo, the first fetch attempt fails on purpose, then the retry succeeds. |
+| Invalid data | A batch that fails a rule. The demo removes the required `High` column, so validation rejects it and the database write never starts. |
+| Retry | Prefect attempts the failed fetch task again inside the same flow run. The fetch can retry twice on a transient failure. |
+| Cache policy | The rule for reusing a previous task result. With `NO_CACHE`, Prefect executes the task whenever the flow calls it. Yahoo can revise recent rows, and the database write must execute to commit those rows. Caching can still help with an expensive calculation whose inputs fully determine its result. |
+| Incremental catch-up | A new flow run reads the latest committed trade date from Silver and fetches the missing tail, including a short overlap for revisions. |
+| Manual backfill | An operator chooses an explicit start and end date to load or repair. |
+
+[Prefect task and retry settings](https://reference.prefect.io/prefect/tasks/) · [Prefect cache policies](https://reference.prefect.io/prefect/cache_policies/)
 
 ## Backup routes
 

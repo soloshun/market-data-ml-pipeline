@@ -13,10 +13,10 @@ deployments:
   - name: workshop-cloud
     version: "{{ $PREFECT_CODE_REVISION }}"
     entrypoint: market_data/flows/historical_ingestion.py:ingest_historical_prices
-    description: Fetch Yahoo Finance data and persist Silver and Gold.
+    description: Catch up from the latest trade date stored in Supabase.
     parameters:
       source: yfinance
-      incremental: true
+      incremental: true # Read the latest saved trade date at the start of each run.
       require_db: true
       database_secret_block: market-data-supabase-url
       write_bronze: false
@@ -26,4 +26,4 @@ deployments:
     schedules:
       - cron: "0 6 * * *"
         timezone: Africa/Accra
-        active: false
+        active: false # Enable after the fixture and live runs pass in your workspace.

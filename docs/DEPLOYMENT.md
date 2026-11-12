@@ -29,9 +29,18 @@ On GitHub, set `main` as the default branch. Open a pull request from `dev` into
 
 ## 2. Set up Supabase
 
-1. Create a Supabase project and open **SQL Editor**. Run the full [PostgreSQL schema](../sql/schema.sql). It creates `market_data.market_prices` and `market_data.market_features`.
-2. In Supabase, click **Connect**. Copy the PostgreSQL connection URI. Choose **Session pooler** if the worker is on IPv4 or **Direct connection** if it can reach the direct host. These are database credentials for the worker.
-3. Replace the password placeholder with the URL-encoded database password. Use `sslmode=require` or certificate verification. Add `?sslmode=require` if the URI has no query parameters and `&sslmode=require` if it already has some. Keep the URI handy for the next step.
+1. Sign in to the [Supabase Dashboard](https://supabase.com/dashboard). Click **New project**, select your organization, choose a project name and region, set a database password, and click **Create new project**. Save that password privately. You'll need it to complete the connection URI.
+2. When the project is ready, open **SQL Editor → New query**. Copy the full contents of [`sql/schema.sql`](../sql/schema.sql) into the editor and click **Run**. It creates `market_data.market_prices` and `market_data.market_features`.
+3. In the project header, click **Connect**. In the connection string section, select **URI**, then choose **Session pooler** for a typical IPv4 worker. Choose **Direct connection** if the worker can reach the project's direct database host. Copy the connection string as shown.
+4. Replace the password placeholder with the database password. Percent-encode special characters in the password, such as `@` as `%40` and `#` as `%23`. Preserve the host, port and username from **Connect**.
+5. Set `sslmode=require` in the URI. Append `?sslmode=require` when there are no query parameters or `&sslmode=require` when there are existing parameters. If `sslmode` is already set, edit it in place. Paste the completed URI into the Prefect Secret block in the next section.
+
+To check the schema, run this query in Supabase SQL Editor. Both columns should show a table name.
+
+```sql
+SELECT to_regclass('market_data.market_prices') AS silver,
+       to_regclass('market_data.market_features') AS gold;
+```
 
 [Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres)
 
@@ -49,16 +58,17 @@ Select the workspace you will use for the deployment. If the CLI is still target
 
 ### Create the Supabase Secret block
 
-1. In your Prefect Cloud workspace, open **Blocks** and choose **Add Block**.
-2. Search for **Secret** and choose **Add**.
-3. Set the block name to `market-data-supabase-url`. Paste the complete PostgreSQL URI from Supabase into **Value**, then save the block.
-4. Open [`prefect.yaml`](../prefect.yaml) and find the flow parameter `database_secret_block`. It contains the block name. At runtime the worker resolves the name using `Secret.load(block_name).get()` in the [ingestion flow](../src/market_data/flows/historical_ingestion.py).
+1. Open [Prefect Cloud](https://app.prefect.cloud) and select the workspace where the worker and deployment will run.
+2. In the sidebar, choose **Blocks → Add Block**. Search for the built-in **Secret** block and select it to open the form. You can also get the form link by running `uv run --locked prefect block create secret` after signing in to the workspace.
+3. Enter `market-data-supabase-url` as the **Block Name**. In **Value**, paste the complete `postgresql://…` URI from Supabase, with the password filled in and TLS enabled. Click **Save** or **Create**.
+4. Go back to **Blocks** and check that `market-data-supabase-url` appears as a Secret in the same workspace. You can also list block names with `uv run --locked prefect block ls`.
+5. Open [`prefect.yaml`](../prefect.yaml). Its `database_secret_block` parameter must match the block's name exactly. The worker uses `Secret.load(block_name).get()` when it needs to read or write Supabase. The URL is entered in the Secret form.
 
 Teach **Secret blocks** for credentials such as a database URI. Use **Prefect Variables** for ordinary settings such as a ticker or date range. To rotate the database credential, update the block value and start a new run. [Prefect Secret block reference](https://reference.prefect.io/prefect/blocks/system/#prefect.blocks.system.Secret)
 
 ## 4. Connect GitHub Actions to Prefect
 
-In GitHub, go to **Settings → Secrets and variables → Actions**. Add the following to the repository.
+In GitHub, go to **Settings → Secrets and variables → Actions**. Use the **Variables** tab for the two variables below and **Secrets → New repository secret** for the key. After signing in with the Prefect CLI, `uv run --locked prefect config view` shows the workspace's `PREFECT_API_URL` to copy. Create the Prefect key in the Cloud UI under your profile's **API Keys**.
 
 | Kind | Name | Value |
 | --- | --- | --- |
@@ -100,6 +110,8 @@ Then try the deployment defaults, which catch up live Yahoo Finance data for `GC
 uv run --locked prefect deployment run 'historical-ingestion/workshop-cloud' --watch
 ```
 
+In the run log, find the latest stored date and the requested start and end dates. To see the watermark the next run will use, run this in Supabase SQL Editor:
+
 ```sql
 SELECT symbol, count(*) AS rows, max(trade_date) AS latest_date
 FROM market_data.market_prices
@@ -107,6 +119,12 @@ WHERE symbol = 'GC=F'
 GROUP BY symbol;
 ```
 
-The 06:00 Africa/Accra schedule starts paused. After both runs succeed, change `active: false` to `active: true` in `prefect.yaml` on `dev` and merge. A student's copy can change the work pool and Secret block names in the same file to match their workspace.
+## 7. Understand the daily catch-up
+
+In [`prefect.yaml`](../prefect.yaml), `incremental: true` makes every default Cloud run read the last committed trade date per ticker from Supabase. The deployment requests Yahoo Finance data through yesterday UTC. An empty table starts with the prior 60 calendar days. After that, each run rereads seven calendar days ending on the last committed date, then fetches everything available after it through the same cutoff.
+
+For example, if the worker was offline for several scheduled runs, the saved date stays where it was. When the next run starts, its later cutoff covers the missing sessions. Upserts update overlapping keys, and both tables commit together. Older holes inside already loaded history need a manual backfill. Try the [same recovery with a local fixture](../README.md#practice-catch-up-after-missed-runs).
+
+The deployment schedules one run at **06:00 Africa/Accra** when active. It starts paused. After the manual fixture and live runs succeed, change `active: false` to `active: true` in `prefect.yaml` on `dev` and merge when you're ready to schedule it. A student's copy can change the work pool and Secret block names in the same file to match their workspace.
 
 [Prefect YAML deployments](https://www.prefect.io/docs/v3/how-to-guides/deployments/prefect-yaml) · [Prefect code retrieval](https://www.prefect.io/docs/v3/how-to-guides/deployments/store-flow-code)

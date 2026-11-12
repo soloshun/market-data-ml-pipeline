@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 Source = Literal["fixture", "yfinance"]
 Database = Path | str
+# "transient" simulates a timeout. "invalid" removes a required column.
 FailureDemo = Literal["transient", "invalid"]
 FIXTURE_SYMBOL = "XAUUSD-DEMO"
 FIXTURE_START = date(2025, 1, 6)
