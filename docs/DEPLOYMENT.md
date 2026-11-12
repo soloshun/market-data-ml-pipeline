@@ -116,9 +116,11 @@ Confirm the version matches the commit on `main` and the preview logs show 12 ho
 
 The hourly flow fetches one-hour bars for Yahoo's `GC=F` gold futures ticker. It writes validated bars to Silver (`market_data.hourly_prices`) and trailing features to Gold (`market_data.hourly_features`). Both use `(symbol, bar_start_utc)` as the key. An empty hourly Silver table starts a one-year backfill for `GC=F`.
 
-- **Cadence.** `0 6,12 * * *` schedules the flow at **06:00 and 12:00 Africa/Accra**. Each run fetches completed one-hour bars.
+- **Cadence.** `0 */6 * * 1-5` schedules the flow at **00:00, 06:00, 12:00, and 18:00 Africa/Accra, Monday through Friday**. Each run fetches completed one-hour bars.
 - **Cutoff:** A 12:00 run can store the 11:00 bar because that hour has elapsed. It does not store the 12:00 bar. The flow preserves Yahoo's timestamps, including sessions starting at half past the hour. Market closures or gaps in Yahoo's feed can mean fewer than six new bars.
 - **Catch-up:** The first run requests the previous year. Later runs read the newest saved hour, go back one day for revisions, and fetch through the current hour cutoff. Upserts let you rerun the same range safely. An older gap needs an explicit backfill.
+
+The weekday filter applies to run times. CME gold futures reopen Sunday evening in Chicago, and the first Monday run catches up on available bars from that session. [CME Gold Futures trading hours](https://www.cmegroup.com/market-regulation/files/gold-futures-and-options-fact-card.pdf)
 
 Gold contains percent return from the previous observed bar, 5- and 20-bar moving averages, and sample volatility over the last five returns. These windows count observed bars, so a window can span a market closure. The flow rebuilds Gold from stored Silver history so a revised bar also updates any later features it affects. Both tables commit in one transaction.
 
