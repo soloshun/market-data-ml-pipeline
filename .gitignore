@@ -218,3 +218,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Workshop credentials and generated data
+.env.*
+!.env.example
+.prefect/
+data/bronze/
+
+# Local implementation brief and instructor notes
+/CODEX_IMPLEMENTATION_BRIEF.md
+/docs/*.local.md
