@@ -1,11 +1,13 @@
 # Architecture
 
+The local lesson runs `historical_ingestion.py` on daily bars and stores them in SQLite. Prefect Cloud runs `hourly_ingestion.py` on completed one-hour bars and stores them in Supabase. Both entrypoints call plain Python functions in `ingestion/`.
+
 | Layer | Responsibility | Location |
 | --- | --- | --- |
-| Source | One download per Yahoo ticker or a packaged synthetic CSV | `ingest.py`, `src/market_data/data/market_sample.csv` |
+| Source | One download per Yahoo ticker or a packaged synthetic CSV | `sources.py`, `src/market_data/data/market_sample.csv` |
 | Bronze (local lesson) | Preserve provider fields, including adjusted close when present, and attach ticker, source and ingestion time | Local Parquet under `ingest_date=YYYY-MM-DD/symbol=…/` |
-| Silver | Validate, sort and retain typed daily OHLCV | `validate.py`, `market_prices` |
-| Gold | Calculate daily percent return, trailing means and volatility | `transform.py`, `market_features` |
+| Silver | Validate, sort and retain typed daily OHLCV | `validation.py`, `market_prices` |
+| Gold | Calculate daily percent return, trailing means and volatility | `features.py`, `market_features` |
 
 The source adapter unwraps pandas' date index and, if present, the requested ticker from a two-level column index. It then hands the data to Polars. Bronze preserves the provider fields after this structural normalization. Polars converts dates to session calendar dates, sorts by symbol and date, and rejects a batch with missing fields, out-of-window dates, invalid OHLCV or duplicate keys. An invalid batch can leave Bronze available for investigation. Silver and Gold for that run are unwritten.
 
@@ -15,17 +17,17 @@ The source adapter unwraps pandas' date index and, if present, the requested tic
 | --- | --- |
 | 1. [cli.py](../src/market_data/cli.py) | Start at `run_command`. See how source, symbols, dates and database options become flow parameters. |
 | 2. [flows/historical_ingestion.py](../src/market_data/flows/historical_ingestion.py) | Start at `ingest_historical_prices`. Read the four task calls at the bottom before reading their bodies. |
-| 3. [ingest.py](../src/market_data/ingest.py) | Follow `read_fixture`, then `save_snapshot`. Open `normalize_yahoo` when comparing live data with the fixture. |
-| 4. [validate.py](../src/market_data/validate.py) | Read `validate_prices` from required fields through type conversion, row checks, and sorting. |
-| 5. [transform.py](../src/market_data/transform.py) | Read `build_features` and use `shift(1)` to identify where the previous close comes from. |
-| 6. [storage.py](../src/market_data/storage.py) and [SQLite schema](../src/market_data/data/sqlite_schema.sql) | Follow `load_market_data` and compare the `ON CONFLICT` key with each primary key. |
+| 3. [sources.py](../src/market_data/ingestion/sources.py) | Follow `read_fixture`, then `save_snapshot`. Open `normalize_yahoo` when comparing live data with the fixture. |
+| 4. [validation.py](../src/market_data/ingestion/validation.py) | Read `validate_prices` from required fields through type conversion, row checks, and sorting. |
+| 5. [features.py](../src/market_data/ingestion/features.py) | Read `build_features` and use `shift(1)` to identify where the previous close comes from. |
+| 6. [storage.py](../src/market_data/ingestion/storage.py) and [SQLite schema](../src/market_data/data/sqlite_schema.sql) | Follow `load_market_data` and compare the `ON CONFLICT` key with each primary key. |
 | 7. [test_transform.py](../tests/test_transform.py) and [test_idempotency.py](../tests/test_idempotency.py) | Check where warm-up, backfill effects and rollback are asserted. |
 
 ## Orchestration and computation
 
 ```mermaid
 flowchart TD
-    A["CLI or Prefect deployment"] --> B["fetch_prices"]
+    A["Local daily CLI or notebook"] --> B["fetch_prices"]
     B -->|Temporary fetch error| C["Wait and retry, up to twice"]
     C --> B
     B -->|Local snapshot enabled| D["save_bronze"]
@@ -83,8 +85,8 @@ flowchart LR
     F --> G["Upsert hourly_features and commit Silver and Gold together"]
 ```
 
-Start at [`ingest_hourly_gold`](../src/market_data/flows/hourly_ingestion.py), then read [`hourly_window`](../src/market_data/hourly.py), [`build_hourly_features`](../src/market_data/transform.py), and [`load_hourly_prices`](../src/market_data/storage.py). Compare the hourly key `(symbol, bar_start_utc)` with the daily key `(symbol, trade_date)`. The hourly moving averages use trailing bars, just as the daily moving averages use trailing sessions.
+Start at [`ingest_hourly_gold`](../src/market_data/flows/hourly_ingestion.py), then read [`hourly_window`](../src/market_data/ingestion/hourly.py), [`build_hourly_features`](../src/market_data/ingestion/features.py), and [`load_hourly_prices`](../src/market_data/ingestion/storage.py). Compare the hourly key `(symbol, bar_start_utc)` with the daily key `(symbol, trade_date)`. The hourly moving averages use trailing bars, just as the daily moving averages use trailing sessions.
 
 ## Handoff to the ML workshop
 
-Join Silver and Gold on `(symbol, trade_date)` to build a training dataset. Define prediction time before choosing features. Features using the current close become available after that session closes. Keep future labels separate and split by time for evaluation. Record the data snapshot and feature definition so an experiment can be repeated. Synthetic examples use the reserved symbol `XAUUSD-DEMO`.
+The MLOps workshop starts with live hourly Silver and Gold joined on `(symbol, bar_start_utc)`. The [MLOps handoff](MLOPS.md) defines the forecast checkpoint, training target, and time split.

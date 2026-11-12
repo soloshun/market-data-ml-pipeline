@@ -4,7 +4,7 @@ from prefect.blocks.system import Secret
 
 from market_data import config
 from market_data.config import Database
-from market_data.ingest import TransientFetchError
+from market_data.ingestion.sources import TransientFetchError
 
 
 def retry_transient(_task, _task_run, state) -> bool:

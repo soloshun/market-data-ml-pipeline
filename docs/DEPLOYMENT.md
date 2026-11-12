@@ -4,7 +4,7 @@ Start with the local notebook. It creates SQLite and lets you inspect daily Silv
 
 ```mermaid
 flowchart LR
-    A["Merge dev into main"] --> B["GitHub Actions runs checks"]
+    A["Merge a release PR into main"] --> B["GitHub Actions runs checks"]
     B --> C["Register the tested commit in Prefect Cloud"]
     C --> D["Managed pool clones that commit"]
     D --> E["Load the named Prefect Secret block"]
@@ -22,11 +22,9 @@ Create `main` from the original branch if it does not exist, and do your changes
 ```sh
 git remote -v
 git branch -avv
-git push -u origin main
-git push -u origin dev
 ```
 
-Push changes to `dev` and review the checks there. When Supabase and Prefect are ready, merge a pull request from `dev` into `main`. The push to `main` runs the checks again and, if they pass and deployment is enabled, GitHub Actions registers that commit in Prefect Cloud automatically. Set `main` as the GitHub default branch if you want **Run workflow** available there for manual re-runs. If you're using GitHub CLI and need to sign in, run `gh auth login`.
+Run lint and tests locally before pushing development changes to `dev`. This version of the workflow runs CI on pull requests into `main`, pushes to `main`, and manual runs. When you are ready to release, merge a PR into `main`. If the checks pass and deployment is enabled, GitHub Actions registers that commit in Prefect Cloud. Set `main` as the GitHub default branch to expose **Run workflow**. If you're using GitHub CLI and need to sign in, run `gh auth login`.
 
 ## 2. Set up Supabase
 
@@ -89,10 +87,10 @@ If you're using your own copy of the project, select your own Prefect Cloud work
 
 GitHub uses its API key to register the deployment. At runtime the flow reads the Supabase Secret block from its Prefect workspace.
 
-## 5. Release from `dev` to `main`
+## 5. Release to `main`
 
 1. Confirm that **Work Pools** in Prefect Cloud shows `market-data-ml` (or your own pool name) as a **Prefect Managed** pool and that it is not paused. Prefect runs the flow for you; no terminal or worker needs to stay open.
-2. Push to `dev` and let **Verify and deploy → checks** finish. Review and merge a pull request from `dev` into `main`.
+2. Open a release PR into `main` and let **Verify and deploy → checks** finish. For the schedule demo, merge the dedicated schedule PR. Keep the MLOps preparation on `dev` until its own release.
 3. Open GitHub **Actions → Verify and deploy** and select the new run for `main`. Confirm both **checks** and **deploy** passed. If you enabled deployment after the merge, use **Run workflow** on `main` or push a new commit to `main`.
 4. Open **Deployments** in your Prefect workspace. Find `hourly-ingestion/hourly-gold-bars` and confirm its version matches the commit on `main`. The daily flow is still available locally through the notebook and `market-data serve`.
 
@@ -157,6 +155,17 @@ WHERE p.symbol = 'GC=F';
 ```
 
 Pause the hourly schedule in Prefect after the December trial. Also set the hourly schedule's `active` flag to `false` in `prefect.yaml` and merge that change so a future release keeps it paused.
+
+### Pause and resume between sessions
+
+In Prefect Cloud, open **Deployments → hourly-gold-bars → Schedules** and toggle the schedule. From a terminal using the Cloud profile, you can also run:
+
+```sh
+uv run --locked prefect deployment schedule pause 'hourly-ingestion/hourly-gold-bars' --all
+uv run --locked prefect deployment schedule resume 'hourly-ingestion/hourly-gold-bars' --all
+```
+
+Resume before the next Accra checkpoint you want to observe. The following run catches up from the latest saved bar. You can start a manual run while the schedule is paused. A release reapplies the `active` value in `prefect.yaml`, so check the schedule after deploying.
 
 [Yahoo Finance interval and cutoff options](https://ranaroussi.github.io/yfinance/reference/api/yfinance.download.html)
 

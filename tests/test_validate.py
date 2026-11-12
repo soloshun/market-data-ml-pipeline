@@ -4,8 +4,8 @@ import polars as pl
 import pytest
 
 from market_data.config import FIXTURE_END, FIXTURE_START, FIXTURE_SYMBOL
-from market_data.ingest import read_fixture
-from market_data.validate import validate_prices
+from market_data.ingestion.sources import read_fixture
+from market_data.ingestion.validation import validate_prices
 
 
 @pytest.fixture

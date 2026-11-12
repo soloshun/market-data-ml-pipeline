@@ -4,9 +4,9 @@ import pytest
 from prefect.blocks.system import Secret
 from prefect.testing.utilities import prefect_test_harness
 
-from market_data import storage
 from market_data.config import FIXTURE_END, FIXTURE_START, FIXTURE_SYMBOL
 from market_data.flows import historical_ingestion
+from market_data.ingestion import storage
 
 
 def test_fixture_flow_with_retry_and_permanent_validation_failure(tmp_path, monkeypatch):

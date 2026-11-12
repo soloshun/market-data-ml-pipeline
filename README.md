@@ -1,17 +1,21 @@
 # Market Data ML Pipeline
 
-A runnable Data Engineering 101 workshop. Fetch historical daily open, high, low, close and volume (OHLCV), save raw Parquet, validate and calculate features in Polars, and load SQLite locally or Supabase from Prefect Cloud. The resulting tables are inputs for a later ML workshop.
+A workshop that starts with local data engineering and uses the hosted hourly data in the MLOps lessons.
+
+| Path | Where it runs | What it produces |
+| --- | --- | --- |
+| Local daily lesson | Notebook or `market-data run --source fixture`, with local Prefect | Daily Bronze Parquet, Silver prices, and Gold features in SQLite |
+| Hosted hourly ingestion | `hourly-ingestion/hourly-gold-bars` in Prefect Cloud | Completed `GC=F` bars in Supabase `hourly_prices` and trailing features in `hourly_features` |
+| MLOps kickoff | Read the hourly tables and define the first training dataset | A forecast checkpoint, target, and evaluation plan |
+
+Follow the [daily notebook](notebooks/01_historical_ingestion.ipynb) for the local lesson, the [deployment guide](docs/DEPLOYMENT.md) for the hosted flow, and the [MLOps handoff](docs/MLOPS.md) for the next workshop.
 
 ```mermaid
 flowchart LR
-    A["Fixture or Yahoo Finance"] --> B["Bronze · local Parquet"]
-    B --> C["Silver · validated prices"]
-    A -->|Cloud| C
-    C --> D["Gold · trailing features"]
-    C --> E["SQLite locally or Supabase in Cloud"]
-    D --> E
-    F["Prefect · tasks, logs and retries"] -. orchestrates .-> B
-    F -. orchestrates .-> E
+    A["Local notebook or CLI"] --> B["Daily Bronze Parquet"]
+    B --> C["Daily Silver and Gold in SQLite"]
+    D["Prefect Cloud hourly deployment"] --> E["Hourly Silver and Gold in Supabase"]
+    E --> F["MLOps workshop dataset"]
 ```
 
 ## Start reading here
@@ -30,20 +34,24 @@ For the code walkthrough, start at `run_command` in [cli.py](src/market_data/cli
 
 ```text
 src/market_data/
-  cli.py                         Run, backfill, catch up, serve, and count
-  flows/historical_ingestion.py  Prefect flow and its four tasks
-  ingest.py                      Read the fixture or Yahoo and write Bronze
-  validate.py                    Enforce the Silver schema and quality rules
-  transform.py                   Calculate trailing features in Polars
-  storage.py                     Load Silver and Gold in SQLite or PostgreSQL
-  data/market_sample.csv         Packaged synthetic fixture
+  cli.py                         Commands for local runs and backfills
+  flows/
+    historical_ingestion.py      Orchestrate the local daily lesson
+    hourly_ingestion.py          Orchestrate hourly ingestion
+  ingestion/
+    sources.py                   Read fixtures or Yahoo and write Bronze
+    validation.py                Enforce Silver schemas and quality rules
+    features.py                  Calculate trailing Gold features in Polars
+    storage.py                   Load Silver and Gold in one transaction
+    hourly.py                    Choose hourly windows and read the hourly fixture
+  data/                          Packaged fixtures and SQLite schema
 notebooks/                       Run the guided ingestion lesson
 sql/                             Create the tables and verify a load
 tests/                           Exercise the adapter, rules, flow, and database
 docs/                            Instructor guide and deployment instructions
 ```
 
-The importable package uses Python's `src/` layout. The `flows/` directory gives each future workflow its own named entrypoint. Tasks for the current flow live alongside the flow, with data logic in the modules they call. [Python Packaging User Guide](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/) · [Prefect YAML entrypoints](https://www.prefect.io/docs/v3/how-to-guides/deployments/prefect-yaml)
+The importable package uses Python's `src/` layout. Prefect entrypoints live in `flows/`, and the functions they call live in `ingestion/`. This follows the same principle as Dataform on BigQuery: organize code around the stages readers follow through a workflow. [Python Packaging User Guide](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/) · [Dataform repository structure](https://docs.cloud.google.com/dataform/docs/best-practices-repositories)
 
 ## Five-minute fixture quickstart
 
@@ -101,7 +109,7 @@ uv run market-data catch-up --source yfinance --symbol 'GC=F'
 
 ## Practice catch-up after missed runs
 
-The scheduled Cloud deployment uses the same catch-up logic as the local command. At the start of each run, the flow reads the latest committed trade date per ticker from Silver. For live data, the end of the window defaults to today's UTC date, which is excluded. It fetches from six calendar days before the latest saved date through the exclusive end. That gives seven days of overlap, including the saved date, plus every later available session. On the first live load, it requests the preceding 60 calendar days.
+In the local daily lesson, the flow reads the latest committed trade date per ticker from Silver. For live data, the end of the window defaults to today's UTC date, which is excluded. It fetches from six calendar days before the latest saved date through the exclusive end. That gives seven days of overlap, including the saved date, plus every later available session. On the first live load, it requests the preceding 60 calendar days. The [hosted hourly flow](docs/DEPLOYMENT.md#7-collect-hourly-gold-bars) uses timestamps and a one-day overlap.
 
 Try it with a fresh SQLite file. The commands run in a subshell so your existing workshop database stays available after the exercise.
 
@@ -169,7 +177,7 @@ uv run --locked pytest
 
 Tests use fixture data, SQLite, and a local Prefect server. Set `TEST_DATABASE_URL` to a **disposable PostgreSQL database with no `market_data` schema** to include PostgreSQL tests. Those tests create and drop their own schema. GitHub Actions provides disposable PostgreSQL for every check run.
 
-Use `dev` for workshop changes and `main` for releases. Once enabled, a passing push to `main` registers its exact Git commit as `hourly-ingestion/hourly-gold-bars`, this project's only Prefect Cloud deployment. The Prefect Managed pool fetches Yahoo data and uses a Prefect Secret block to connect to Supabase. The daily flow remains available in the notebook and through the local CLI. See [GitHub and Prefect deployment](docs/DEPLOYMENT.md) for the branches, credentials, and verification commands.
+Use `dev` for workshop changes and `main` for releases. Run the checks above on development branches. GitHub runs them for PRs into `main`, releases on `main`, and manual runs. Once enabled, a passing release on `main` registers its exact commit as `hourly-ingestion/hourly-gold-bars`. See the [deployment guide](docs/DEPLOYMENT.md) and the [security walkthrough](docs/SECURITY.md).
 
 The [hourly walkthrough](docs/DEPLOYMENT.md#7-collect-hourly-gold-bars) uses a separate flow for gold futures. Start locally with `uv run market-data hourly` to load 12 synthetic Silver bars and their Gold features into SQLite. The Cloud deployment collects completed one-hour bars at 06:00 and 12:00 Accra.
 

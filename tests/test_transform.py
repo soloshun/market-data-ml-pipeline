@@ -4,7 +4,7 @@ from statistics import stdev
 import polars as pl
 import pytest
 
-from market_data.transform import build_features
+from market_data.ingestion.features import build_features
 
 
 def example_prices() -> pl.DataFrame:

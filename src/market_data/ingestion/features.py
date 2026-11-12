@@ -2,7 +2,7 @@
 
 import polars as pl
 
-from market_data.validate import HOURLY_KEY, KEY
+from market_data.ingestion.validation import HOURLY_KEY, KEY
 
 
 def build_features(prices: pl.DataFrame) -> pl.DataFrame:

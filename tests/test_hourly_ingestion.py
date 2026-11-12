@@ -7,10 +7,10 @@ import polars as pl
 import pytest
 from prefect.testing.utilities import prefect_test_harness
 
-from market_data import hourly, ingest, storage
 from market_data.config import FIXTURE_SYMBOL
 from market_data.flows.hourly_ingestion import ingest_hourly_gold
-from market_data.validate import validate_hourly_prices
+from market_data.ingestion import hourly, sources, storage
+from market_data.ingestion.validation import validate_hourly_prices
 
 
 def test_catch_up_uses_latest_hour_and_excludes_open_hour():
@@ -39,8 +39,8 @@ def test_yahoo_hourly_uses_real_timestamps_and_filters_provider_cutoff(monkeypat
         assert (kwargs["start"], kwargs["end"]) == (start, end)
         return pd.DataFrame(values, index=index)
 
-    monkeypatch.setattr(ingest.yf, "download", download)
-    raw = ingest.fetch_yahoo_hourly("GC=F", start, end)
+    monkeypatch.setattr(sources.yf, "download", download)
+    raw = sources.fetch_yahoo_hourly("GC=F", start, end)
     bars = validate_hourly_prices(raw, "GC=F", start, end)
     assert bars["bar_start_utc"].to_list() == [
         start,

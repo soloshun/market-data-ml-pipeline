@@ -6,14 +6,15 @@ import pytest
 from yfinance.exceptions import YFRateLimitError
 
 from market_data.config import FIXTURE_END, FIXTURE_START, FIXTURE_SYMBOL
-from market_data.ingest import (
+from market_data.ingestion import sources
+from market_data.ingestion.sources import (
     TransientFetchError,
     fetch_yahoo,
     normalize_yahoo,
     read_fixture,
     save_snapshot,
 )
-from market_data.validate import validate_prices
+from market_data.ingestion.validation import validate_prices
 
 
 def yahoo_frame():
@@ -48,7 +49,7 @@ def test_download_options(monkeypatch):
         assert options["keepna"] is True
         return yahoo_frame()
 
-    monkeypatch.setattr("market_data.ingest.yf.download", download)
+    monkeypatch.setattr(sources.yf, "download", download)
     assert fetch_yahoo("AAPL", FIXTURE_START, FIXTURE_END).height == 1
 
 
@@ -56,13 +57,13 @@ def test_provider_rate_limit_is_retryable(monkeypatch):
     def download(*args, **kwargs):
         raise YFRateLimitError()
 
-    monkeypatch.setattr("market_data.ingest.yf.download", download)
+    monkeypatch.setattr(sources.yf, "download", download)
     with pytest.raises(TransientFetchError, match="temporary Yahoo"):
         fetch_yahoo("AAPL", FIXTURE_START, FIXTURE_END)
 
 
 def test_empty_download_has_actionable_error(monkeypatch):
-    monkeypatch.setattr("market_data.ingest.yf.download", lambda *a, **kw: pd.DataFrame())
+    monkeypatch.setattr(sources.yf, "download", lambda *a, **kw: pd.DataFrame())
     with pytest.raises(TransientFetchError, match=r"AAPL: Yahoo returned zero rows"):
         fetch_yahoo("AAPL", FIXTURE_START, FIXTURE_END)
 

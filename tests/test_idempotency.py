@@ -7,10 +7,10 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from market_data import hourly, storage
 from market_data.config import FIXTURE_END, FIXTURE_START, FIXTURE_SYMBOL
-from market_data.ingest import read_fixture
-from market_data.validate import validate_hourly_prices, validate_prices
+from market_data.ingestion import hourly, storage
+from market_data.ingestion.sources import read_fixture
+from market_data.ingestion.validation import validate_hourly_prices, validate_prices
 
 
 @pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])

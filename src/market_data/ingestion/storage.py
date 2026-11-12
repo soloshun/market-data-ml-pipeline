@@ -12,7 +12,7 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
 from market_data.config import Database, Source
-from market_data.transform import build_features, build_hourly_features
+from market_data.ingestion.features import build_features, build_hourly_features
 
 UPSERT_PRICES = """
     INSERT INTO {table}

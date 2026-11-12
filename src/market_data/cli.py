@@ -9,10 +9,11 @@ import psycopg
 from dotenv import load_dotenv
 from prefect.schedules import Cron
 
-from market_data import config, storage
+from market_data import config
 from market_data.flows.historical_ingestion import ingest_historical_prices
 from market_data.flows.hourly_ingestion import ingest_hourly_gold
-from market_data.ingest import TransientFetchError
+from market_data.ingestion import storage
+from market_data.ingestion.sources import TransientFetchError
 
 
 def make_parser() -> argparse.ArgumentParser:

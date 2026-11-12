@@ -1,10 +1,10 @@
 # Instructor walkthrough · 60 minutes
 
-Start with the [historical ingestion notebook](../notebooks/01_historical_ingestion.ipynb) in one VS Code pane and the linked source files in the other. Keep one terminal for commands and one for Prefect. The fixture is the default for every core exercise.
+Start with the [local daily notebook](../notebooks/01_historical_ingestion.ipynb) in one VS Code pane and the linked source files in the other. Keep one terminal for commands and one for local Prefect. The fixture is the default for the 60-minute lesson. Use the Cloud follow-up after students have seen daily Silver and Gold in SQLite.
 
 ## Before class
 
-1. Open the code editor with `cli.py`, `flows/historical_ingestion.py`, `ingest.py`, `validate.py`, `transform.py` and `storage.py`.
+1. Open `cli.py`, `flows/historical_ingestion.py`, and the source, validation, feature, and storage modules under `ingestion/`.
 2. Run `uv python install 3.12` and `uv sync --locked --group notebook` at the repository root. Open the notebook with the project's `.venv` kernel and run all cells. Copy `.env.example` to `.env` if needed. Run `uv run --locked pytest`.
 3. Run notebook Section 5 and open `data/market_data.sqlite3` in your SQLite viewer if you plan to show the tables outside the notebook.
 4. Start Prefect in its own terminal and open [the local dashboard](http://127.0.0.1:4200).
@@ -52,7 +52,7 @@ Identify `GC=F` as gold futures and the CSV as synthetic.
 
 Use notebook Sections 3 and 4 to show the duplicate-key check, inspect the features, and plot close, moving averages, and daily returns.
 
-In `validate.py`, trace a date, the OHLC bounds, volume, and the duplicate check. In `transform.py`, trace `shift(1)` and the windows over each symbol. Ask what a future observation could change about the displayed rows. Point out the first non-null five-observation mean and volatility. The 20-observation mean starts on observation 20.
+In `validation.py`, trace a date, the OHLC bounds, volume, and the duplicate check. In `features.py`, trace `shift(1)` and the windows over each symbol. Ask what a future observation could change about the displayed rows. Point out the first non-null five-observation mean and volatility. The 20-observation mean starts on observation 20.
 
 ## 25–35 · Load and query SQLite (10 minutes)
 
@@ -117,6 +117,8 @@ Open each run in Prefect. The first fails on attempt one, retries, and completes
 5. Check the automation activity and your inbox, then pause the demo automation. If email isn't available, use the run's Failed state and logs to teach how the trigger would work.
 
 For the later ML session, a 12:00 checkpoint can use features available by noon to predict the close of the bar ending at 18:00, or the return between the two closes. Four evenly spaced checkpoints keep the horizon at six hours, including 18:00 to midnight. Skip examples where the target bar is missing. Target construction, the time-based split, and model training come later.
+
+For the next session, open the [MLOps handoff](MLOPS.md) to trace the target back to hourly Silver and Gold. Use the [GitHub security walkthrough](SECURITY.md) to show where dependency and secret alerts appear.
 
 [Prefect automation setup](https://www.prefect.io/docs/v3/how-to-guides/automations/creating-automations) · [Prefect email notifications](https://www.prefect.io/docs/v3/concepts/automations#sending-notifications-with-automations)
 
