@@ -46,4 +46,17 @@ CREATE TABLE IF NOT EXISTS market_data.hourly_prices (
     CHECK ((source = 'fixture') = (symbol = 'XAUUSD-DEMO'))
 );
 
+CREATE TABLE IF NOT EXISTS market_data.hourly_features (
+    symbol text NOT NULL,
+    bar_start_utc timestamptz NOT NULL,
+    hourly_return double precision,
+    sma_5 double precision,
+    sma_20 double precision,
+    volatility_5 double precision,
+    computed_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (symbol, bar_start_utc),
+    FOREIGN KEY (symbol, bar_start_utc)
+        REFERENCES market_data.hourly_prices (symbol, bar_start_utc)
+);
+
 COMMIT;

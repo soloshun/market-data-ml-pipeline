@@ -103,20 +103,20 @@ Open each run in Prefect. The first fails on attempt one, retries, and completes
 
 ## Cloud follow-up: PR, schedule, and failure alert
 
-1. Before the merge, run the updated [schema](../sql/schema.sql) in Supabase SQL Editor. It adds the hourly table. Open the PR from `dev` to `main`. Show both deployment names in `prefect.yaml` and the GitHub Actions command. Merge when ready. Watch **checks** then **deploy**, and compare the deployment versions in Prefect Cloud with the commit on `main`. Leave both daily schedules paused.
-2. Show the hourly schedule at **00:00, 06:00, 12:00, and 18:00 Accra**. Start the [hourly backfill](DEPLOYMENT.md#8-collect-hourly-gold-bars) so the class doesn't have to wait. In [the hourly flow](../src/market_data/flows/hourly_ingestion.py), trace the latest saved hour, the exclusive cutoff, and the three tasks. Use the Supabase query to compare `bar_start_utc` (when the bar started) with `ingested_at` (when the pipeline wrote it).
+1. Before the first release, apply the updated [schema](../sql/schema.sql) in Supabase SQL Editor to add hourly Silver and Gold. In class, show the hourly schedule at **06:00 and 12:00 Accra**. Start the [hourly backfill](DEPLOYMENT.md#7-collect-hourly-gold-bars) if the tables are still empty. Trace the latest saved hour, the exclusive cutoff, and the Silver and Gold steps in [the hourly flow](../src/market_data/flows/hourly_ingestion.py). Compare the counts for both tables in Supabase.
+2. Open the schedule PR and show the cron change in `prefect.yaml`. Merge when ready. Watch **checks** then **deploy**, and compare the deployment version in Prefect Cloud with the commit on `main`. Open the schedule to confirm the new times.
 3. Optional alert: In Prefect Cloud, open **Automations** and add a **Flow run state** trigger for **Failed**, with the single flow run tag `classroom-alert-demo`. Choose **Send an email notification**, if available in your workspace, and enter your own test inbox. Save and enable it. The tag keeps the classroom alert scoped to the test run.
-4. From the Cloud terminal, schedule the following one-off run a minute ahead. Show it enter **Scheduled**, then open the logs once it reaches **Failed**. The fixture intentionally omits the `High` column; the run skips Bronze and makes no database writes.
+4. From the Cloud terminal, schedule the following one-off run a minute ahead. Show it enter **Scheduled**, then open the logs once it reaches **Failed**. The start and end match, so the hourly flow rejects the empty window before fetching or writing.
 
    ```sh
-   uv run --locked prefect deployment run 'historical-ingestion/daily-market-data' \
+   uv run --locked prefect deployment run 'hourly-ingestion/hourly-gold-bars' \
      --flow-run-name classroom-alert-demo --start-in '1 minute' --tag classroom-alert-demo \
-     --params '{"source":"fixture","incremental":false,"skip_db":true,"require_db":false,"database_secret_block":null,"write_bronze":false,"demo_failure":"invalid"}'
+     --params '{"source":"fixture","skip_db":true,"require_db":false,"database_secret_block":null,"start_at":"2025-01-06T12:00Z","end_at":"2025-01-06T12:00Z"}'
    ```
 
 5. Check the automation activity and your inbox, then pause the demo automation. If email isn't available, use the run's Failed state and logs to teach how the trigger would work.
 
-For the later ML session, a 12:00 checkpoint can use bars completed by noon to predict the close of the bar ending at 18:00, or the return between the two closes. Four evenly spaced checkpoints keep the horizon at six hours, including 18:00 to midnight. Skip examples where the target bar is missing. The hourly table stores observations only; target construction, the time-based split, and model training come later.
+For the later ML session, a 12:00 checkpoint can use features available by noon to predict the close of the bar ending at 18:00, or the return between the two closes. Four evenly spaced checkpoints keep the horizon at six hours, including 18:00 to midnight. Skip examples where the target bar is missing. Target construction, the time-based split, and model training come later.
 
 [Prefect automation setup](https://www.prefect.io/docs/v3/how-to-guides/automations/creating-automations) · [Prefect email notifications](https://www.prefect.io/docs/v3/concepts/automations#sending-notifications-with-automations)
 

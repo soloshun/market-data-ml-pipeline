@@ -69,6 +69,7 @@ def test_fixture_catches_up_after_a_gap_without_duplicate_hours(tmp_path, monkey
 
     with closing(sqlite3.connect(database)) as conn:
         assert conn.execute("SELECT count(*) FROM hourly_prices").fetchone() == (12,)
+        assert conn.execute("SELECT count(*) FROM hourly_features").fetchone() == (12,)
         assert conn.execute("SELECT count(*) FROM market_prices").fetchone() == (0,)
     assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) == hourly.FIXTURE_END - timedelta(
         hours=1

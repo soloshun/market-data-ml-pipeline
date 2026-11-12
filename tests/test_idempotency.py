@@ -86,26 +86,36 @@ def test_gold_error_rolls_back_silver(database, prices, monkeypatch):
     ]
 
 
-def test_hourly_storage_replaces_a_bar_with_the_same_utc_key(database):
+def test_hourly_backfill_revises_later_gold_features(database, monkeypatch):
     start, end = hourly.FIXTURE_START, hourly.FIXTURE_END
     bars = validate_hourly_prices(
         hourly.read_hourly_fixture(start, end), FIXTURE_SYMBOL, start, end
     )
     assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) is None
-    assert storage.load_hourly_prices(database, bars, "fixture") == 12
+    assert storage.load_hourly_prices(database, bars, "fixture") == (12, 12)
     revised = bars.head(1).with_columns(pl.col("close") + 1)
-    assert storage.load_hourly_prices(database, revised, "fixture") == 1
+    assert storage.load_hourly_prices(database, revised, "fixture") == (1, 12)
     assert storage.latest_hourly_bar(database, FIXTURE_SYMBOL) == bars["bar_start_utc"][-1]
-    if isinstance(database, Path):
-        with closing(sqlite3.connect(database)) as conn:
-            count, first_close = conn.execute(
-                "SELECT count(*), (SELECT close FROM hourly_prices ORDER BY bar_start_utc LIMIT 1) "
-                "FROM hourly_prices"
-            ).fetchone()
-    else:
-        with storage.connect(database) as conn:
-            count, first_close = conn.execute(
-                "SELECT count(*), (SELECT close FROM market_data.hourly_prices "
-                "ORDER BY bar_start_utc LIMIT 1) FROM market_data.hourly_prices"
-            ).fetchone()
-    assert count == 12 and first_close == revised["close"][0]
+
+    def fail(_prices):
+        raise ValueError("simulated hourly feature error")
+
+    monkeypatch.setattr(storage, "build_hourly_features", fail)
+    with pytest.raises(ValueError, match="simulated hourly feature error"):
+        storage.load_hourly_prices(database, bars.head(1), "fixture")
+
+    sqlite = isinstance(database, Path)
+    prefix = "" if sqlite else "market_data."
+    connection = closing(sqlite3.connect(database)) if sqlite else storage.connect(database)
+    with connection as conn:
+        silver = conn.execute(
+            f"SELECT close FROM {prefix}hourly_prices ORDER BY bar_start_utc"
+        ).fetchall()
+        gold = conn.execute(
+            f"SELECT hourly_return, sma_5 FROM {prefix}hourly_features ORDER BY bar_start_utc"
+        ).fetchall()
+    assert len(silver) == len(gold) == 12
+    assert silver[0][0] == revised["close"][0]
+    assert gold[0] == (None, None)
+    assert gold[1][0] == pytest.approx((bars["close"][1] / revised["close"][0] - 1) * 100)
+    assert gold[4][1] == pytest.approx(sum(row[0] for row in silver[:5]) / 5)

@@ -42,4 +42,16 @@ CREATE TABLE IF NOT EXISTS hourly_prices (
     CHECK ((source = 'fixture') = (symbol = 'XAUUSD-DEMO'))
 );
 
+CREATE TABLE IF NOT EXISTS hourly_features (
+    symbol TEXT NOT NULL,
+    bar_start_utc TEXT NOT NULL,
+    hourly_return REAL,
+    sma_5 REAL,
+    sma_20 REAL,
+    volatility_5 REAL,
+    computed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (symbol, bar_start_utc),
+    FOREIGN KEY (symbol, bar_start_utc) REFERENCES hourly_prices (symbol, bar_start_utc)
+);
+
 COMMIT;

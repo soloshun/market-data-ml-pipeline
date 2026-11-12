@@ -1,6 +1,6 @@
 # Deploy the workshop with GitHub, Prefect Cloud, and Supabase
 
-Start with the local notebook. It creates SQLite and lets you inspect Silver and Gold before setting up any cloud accounts. For deployment, GitHub Actions registers the tested code in Prefect Cloud, a Prefect Managed work pool executes it, and Supabase stores the tables.
+Start with the local notebook. It creates SQLite and lets you inspect daily Silver and Gold before setting up any cloud accounts. GitHub Actions releases the hourly gold ingestion flow to Prefect Cloud. A Prefect Managed work pool runs it and Supabase stores hourly Silver bars and Gold features.
 
 ```mermaid
 flowchart LR
@@ -8,8 +8,9 @@ flowchart LR
     B --> C["Register the tested commit in Prefect Cloud"]
     C --> D["Managed pool clones that commit"]
     D --> E["Load the named Prefect Secret block"]
-    E --> F["Fetch Yahoo rows and validate Silver"]
-    F --> G["Commit Silver and Gold to Supabase"]
+    E --> F["Fetch completed hourly Yahoo bars"]
+    F --> G["Validate Silver hourly prices"]
+    G --> H["Compute Gold features and commit both tables"]
 ```
 
 ## 1. Prepare GitHub
@@ -30,17 +31,18 @@ Push changes to `dev` and review the checks there. When Supabase and Prefect are
 ## 2. Set up Supabase
 
 1. Sign in to the [Supabase Dashboard](https://supabase.com/dashboard). Click **New project**, select your organization, choose a project name and region, set a database password, and click **Create new project**. Save that password privately. You'll need it to complete the connection URI.
-2. When the project is ready, open **SQL Editor → New query**. Copy the full contents of [`sql/schema.sql`](../sql/schema.sql) into the editor and click **Run**. It creates `market_data.market_prices`, `market_data.market_features`, and `market_data.hourly_prices`. If you already set up the daily lesson, rerun this file before merging the hourly release; the existing tables and rows are preserved.
+2. When the project is ready, open **SQL Editor → New query**. Copy the full contents of [`sql/schema.sql`](../sql/schema.sql) into the editor and click **Run**. It creates the daily and hourly Silver and Gold tables. If you already set up the daily lesson, rerun this file before merging the hourly release to add the hourly tables.
 3. In the project header, click **Connect**. In the connection string section, select **URI**, then choose **Session pooler**, which works over IPv4. Copy the connection string as shown.
 4. Replace the password placeholder with the database password. Percent-encode special characters in the password, such as `@` as `%40` and `#` as `%23`. Preserve the host, port and username from **Connect**.
 5. Set `sslmode=require` in the URI. Append `?sslmode=require` when there are no query parameters or `&sslmode=require` when there are existing parameters. If `sslmode` is already set, edit it in place. Paste the completed URI into the Prefect Secret block in the next section.
 
-To check the schema, run this query in Supabase SQL Editor. Both columns should show a table name.
+To check the schema, run this query in Supabase SQL Editor. Each column should show a table name.
 
 ```sql
 SELECT to_regclass('market_data.market_prices') AS silver,
        to_regclass('market_data.market_features') AS gold,
-       to_regclass('market_data.hourly_prices') AS hourly_silver;
+       to_regclass('market_data.hourly_prices') AS hourly_silver,
+       to_regclass('market_data.hourly_features') AS hourly_gold;
 ```
 
 [Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres)
@@ -92,57 +94,33 @@ GitHub uses its API key to register the deployment. At runtime the flow reads th
 1. Confirm that **Work Pools** in Prefect Cloud shows `market-data-ml` (or your own pool name) as a **Prefect Managed** pool and that it is not paused. Prefect runs the flow for you; no terminal or worker needs to stay open.
 2. Push to `dev` and let **Verify and deploy → checks** finish. Review and merge a pull request from `dev` into `main`.
 3. Open GitHub **Actions → Verify and deploy** and select the new run for `main`. Confirm both **checks** and **deploy** passed. If you enabled deployment after the merge, use **Run workflow** on `main` or push a new commit to `main`.
-4. Open **Deployments** in your Prefect workspace. Look for `historical-ingestion/daily-market-data` and `hourly-ingestion/hourly-gold-bars`. Confirm both versions match the commit on `main`.
+4. Open **Deployments** in your Prefect workspace. Find `hourly-ingestion/hourly-gold-bars` and confirm its version matches the commit on `main`. The daily flow is still available locally through the notebook and `market-data serve`.
 
 When a run starts, the managed pool installs the packages listed under `work_pool.job_variables.pip_packages` and clones the exact commit. If you change the project's runtime dependencies, update the matching pins in `prefect.yaml` alongside `uv.lock`. A public repository can be cloned as configured; for a private copy, configure [authenticated code retrieval](https://www.prefect.io/docs/v3/how-to-guides/deployments/store-flow-code).
 
-If your workspace already has `historical-ingestion/workshop-cloud`, keep its schedule paused. Prefect registers the new name as a separate deployment; the old one stays visible with its run history. Point any links or automations you still use at `daily-market-data`.
+If your workspace already has `historical-ingestion/workshop-cloud`, leave its schedule paused during the switch. Changing `prefect.yaml` does not remove a previously registered deployment. After verifying the hourly run, you can remove the old daily deployment from **Deployments** in Prefect to free its slot. This does not remove the daily tables in Supabase.
 
-## 6. Verify one fixture run and one live run
+## 6. Verify the Cloud deployment
 
-Run these commands from a terminal pointed at the Cloud workspace.
-
-```sh
-uv run --locked prefect deployment inspect 'historical-ingestion/daily-market-data'
-uv run --locked prefect deployment run 'historical-ingestion/daily-market-data' \
-  --params '{"source":"fixture","incremental":false}' --watch
-```
-
-Check that the deployment version matches the GitHub commit SHA. The run should log a commit to PostgreSQL. In Supabase SQL Editor, run [the fixture verification queries](../sql/verify.sql) and confirm both tables have 30 fixture rows and 30 distinct keys. The cloud flow skips local Bronze snapshots.
-
-Then try the deployment defaults, which catch up live Yahoo Finance data for `GC=F`.
+Run these commands from a terminal pointed at the Cloud workspace. The fixture preview checks the deployed flow without writing synthetic bars to Supabase.
 
 ```sh
-uv run --locked prefect deployment run 'historical-ingestion/daily-market-data' --watch
+uv run --locked prefect deployment inspect 'hourly-ingestion/hourly-gold-bars'
+uv run --locked prefect deployment run 'hourly-ingestion/hourly-gold-bars' \
+  --params '{"source":"fixture","skip_db":true,"require_db":false,"database_secret_block":null}' --watch
 ```
 
-In the run log, find the latest stored date and the requested start and end dates. To see the watermark the next run will use, run this in Supabase SQL Editor:
+Confirm the version matches the commit on `main` and the preview logs show 12 hourly Silver bars and 12 Gold feature rows. Use the live run below to verify the database connection and load real bars.
 
-```sql
-SELECT symbol, count(*) AS rows, max(trade_date) AS latest_trade_date,
-       max(ingested_at) AS latest_write
-FROM market_data.market_prices
-WHERE symbol = 'GC=F'
-GROUP BY symbol;
-```
+## 7. Collect hourly gold bars
 
-## 7. Understand the daily catch-up
+The hourly flow fetches one-hour bars for Yahoo's `GC=F` gold futures ticker. It writes validated bars to Silver (`market_data.hourly_prices`) and trailing features to Gold (`market_data.hourly_features`). Both use `(symbol, bar_start_utc)` as the key. An empty hourly Silver table starts a one-year backfill for `GC=F`.
 
-The schedule tells Prefect **when to run**. The data window tells Yahoo Finance **which dates to return**. A default manual run on November 17 uses November 17 UTC as the exclusive end date, so it can ingest November 16's bar if Yahoo has published it. Weekends, market holidays, or a delayed provider can leave the latest trade date earlier. In Supabase, `trade_date` is the market session date; `ingested_at` records when the price row was last written.
-
-In [`prefect.yaml`](../prefect.yaml), `incremental: true` makes every default Cloud run read the last committed trade date per ticker from Supabase. A ticker with no rows starts with the prior 60 calendar days. After that, each run rereads seven calendar days ending on the last committed date, then fetches everything available after it through the same cutoff. For example, if the last stored date is November 13, the November 17 run requests `[November 7, November 17)`. It upserts existing dates and adds any missing sessions through November 16.
-
-For example, if several scheduled runs fail, the saved date stays where it was. When the next run starts, its later cutoff covers the missing sessions. Upserts update overlapping keys, and both tables commit together. Older holes inside already loaded history need a manual backfill. Try the [same recovery with a local fixture](../README.md#practice-catch-up-after-missed-runs).
-
-The daily deployment's recurring schedule stays paused for the hourly trial. It can still be run manually. For a one-off scheduled failure run during class, use the [instructor's Cloud follow-up](INSTRUCTOR_DEMO.md#cloud-follow-up-pr-schedule-and-failure-alert).
-
-## 8. Collect hourly gold bars
-
-The hourly flow fetches one-hour bars for Yahoo's `GC=F` gold futures ticker and writes them to `market_data.hourly_prices`. The key is `(symbol, bar_start_utc)`; multiple bars on the same date are separate rows. The daily Silver and Gold tables are unchanged.
-
-- **Cadence:** `0 */6 * * *` schedules the flow at **00:00, 06:00, 12:00, and 18:00 Africa/Accra**. Each run fetches one-hour bars; the six-hour schedule controls how often it checks for them.
+- **Cadence.** `0 6,12 * * *` schedules the flow at **06:00 and 12:00 Africa/Accra**. Each run fetches completed one-hour bars.
 - **Cutoff:** A 12:00 run can store the 11:00 bar because that hour has elapsed. It does not store the 12:00 bar. The flow preserves Yahoo's timestamps, including sessions starting at half past the hour. Market closures or gaps in Yahoo's feed can mean fewer than six new bars.
 - **Catch-up:** The first run requests the previous year. Later runs read the newest saved hour, go back one day for revisions, and fetch through the current hour cutoff. Upserts let you rerun the same range safely. An older gap needs an explicit backfill.
+
+Gold contains percent return from the previous observed bar, 5- and 20-bar moving averages, and sample volatility over the last five returns. These windows count observed bars, so a window can span a market closure. The flow rebuilds Gold from stored Silver history so a revised bar also updates any later features it affects. Both tables commit in one transaction.
 
 You can test offline with SQLite before merging. Run the commands from a terminal configured for [local Prefect](../README.md#prefect-ui-and-local-daily-schedule). The fixture starts at 06:00 UTC on January 6, 2025. Use a fresh file, load through 09:00 exclusive, then let the second run catch up:
 
@@ -151,17 +129,17 @@ You can test offline with SQLite before merging. Run the commands from a termina
   export SQLITE_DB_PATH="$(mktemp -d)/hourly.sqlite3"
   uv run --locked market-data hourly --end-at 2025-01-06T09:00Z
   uv run --locked market-data hourly
-  uv run --locked python -c 'import os, sqlite3; db = sqlite3.connect(os.environ["SQLITE_DB_PATH"]); print(db.execute("SELECT count(*), max(bar_start_utc) FROM hourly_prices").fetchone())'
+  uv run --locked python -c 'import os, sqlite3; db = sqlite3.connect(os.environ["SQLITE_DB_PATH"]); print(db.execute("SELECT (SELECT count(*) FROM hourly_prices), (SELECT count(*) FROM hourly_features)").fetchone())'
 )
 ```
 
-Expect 3 bars on the first run and 12 distinct bars after the second. In Prefect Cloud, after the merge and schema setup, manually kick off the real backfill or wait for the next scheduled run:
+Expect 3 Silver and 3 Gold rows after the first run, then 12 of each after the second. In Prefect Cloud, after the merge and schema setup, manually kick off the real backfill or wait for the next scheduled run:
 
 ```sh
 uv run --locked prefect deployment run 'hourly-ingestion/hourly-gold-bars' --watch
 ```
 
-To repair an older window, pass both timestamps. This example replays a completed day before class:
+To replay an older window without deleting any rows, pass both timestamps. The flow uses that explicit window instead of the watermark and upserts matching keys. This example replays a completed day before class:
 
 ```sh
 uv run --locked prefect deployment run 'hourly-ingestion/hourly-gold-bars' \
@@ -171,10 +149,11 @@ uv run --locked prefect deployment run 'hourly-ingestion/hourly-gold-bars' \
 Verify the live row count and timestamps in the Supabase SQL Editor:
 
 ```sql
-SELECT count(*) AS hourly_bars, min(bar_start_utc) AS first_bar,
-       max(bar_start_utc) AS latest_bar, max(ingested_at) AS latest_write
-FROM market_data.hourly_prices
-WHERE symbol = 'GC=F';
+SELECT count(*) AS silver_bars, count(f.bar_start_utc) AS gold_rows,
+       min(p.bar_start_utc) AS first_bar, max(p.bar_start_utc) AS latest_bar
+FROM market_data.hourly_prices AS p
+LEFT JOIN market_data.hourly_features AS f USING (symbol, bar_start_utc)
+WHERE p.symbol = 'GC=F';
 ```
 
 Pause the hourly schedule in Prefect after the December trial. Also set the hourly schedule's `active` flag to `false` in `prefect.yaml` and merge that change so a future release keeps it paused.

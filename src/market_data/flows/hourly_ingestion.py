@@ -1,4 +1,4 @@
-"""Fetch, validate, and store hourly gold bars with Prefect."""
+"""Validate hourly gold bars as Silver and build Gold features with Prefect."""
 
 from datetime import UTC, datetime
 
@@ -11,6 +11,7 @@ from market_data.config import Source
 from market_data.flows._shared import database_target, retry_transient
 from market_data.hourly import hourly_window, read_hourly_fixture
 from market_data.ingest import fetch_yahoo_hourly
+from market_data.transform import build_hourly_features
 from market_data.validate import validate_hourly_prices
 
 
@@ -34,27 +35,41 @@ def fetch_hourly(source: Source, symbol: str, start: datetime, end: datetime) ->
     return fetch_yahoo_hourly(symbol, start, end)
 
 
-validate_hourly = task(validate_hourly_prices, cache_policy=NO_CACHE)
+validate_hourly_silver = task(
+    validate_hourly_prices, name="validate_hourly_silver", cache_policy=NO_CACHE
+)
 
 
 @task(cache_policy=NO_CACHE)
-def store_hourly(
-    prices: pl.DataFrame, source: Source, require_db: bool, secret_block: str | None
-) -> int:
-    """Upsert hourly Silver without exposing credentials in task inputs.
+def store_hourly_silver_and_gold(
+    prices: pl.DataFrame,
+    source: Source,
+    skip_db: bool,
+    require_db: bool,
+    secret_block: str | None,
+) -> None:
+    """Write hourly Silver and Gold together or compute Gold for a preview.
 
     Args:
         prices: Validated hourly bars.
         source: Source label to store.
+        skip_db: Calculate preview features from this batch without opening the database.
         require_db: Require PostgreSQL when there is no Secret block.
         secret_block: Optional Prefect Secret block name.
-
-    Returns:
-        Number of hourly bars upserted.
     """
-    count = storage.load_hourly_prices(database_target(require_db, secret_block), prices, source)
-    get_run_logger().info("Committed %d upserts to hourly_prices.", count)
-    return count
+    logger = get_run_logger()
+    if skip_db:
+        features = build_hourly_features(prices)
+        logger.info("Computed %d hourly Gold preview rows. Database skipped.", features.height)
+        return
+    silver_count, gold_count = storage.load_hourly_prices(
+        database_target(require_db, secret_block), prices, source
+    )
+    logger.info(
+        "Committed %d hourly Silver and %d hourly Gold upserts in one transaction.",
+        silver_count,
+        gold_count,
+    )
 
 
 @flow(name="hourly-ingestion", persist_result=False)
@@ -66,7 +81,7 @@ def ingest_hourly_gold(
     require_db: bool = False,
     database_secret_block: str | None = None,
 ) -> pl.DataFrame:
-    """Collect hourly gold bars without changing the existing daily tables.
+    """Collect hourly gold bars and build trailing features.
 
     Args:
         source: Fixture (synthetic gold) or Yahoo Finance (GC=F gold futures).
@@ -99,12 +114,11 @@ def ingest_hourly_gold(
         end,
     )
     raw = fetch_hourly(source, symbol, start, end)
-    prices = validate_hourly(raw, symbol, start, end)
+    prices = validate_hourly_silver(raw, symbol, start, end)
     get_run_logger().info(
-        "Validated %d hourly bars; latest bar starts %s.",
+        "Validated %d hourly Silver bars. Latest bar starts %s.",
         prices.height,
         prices["bar_start_utc"][-1],
     )
-    if not skip_db:
-        store_hourly(prices, source, require_db, database_secret_block)
+    store_hourly_silver_and_gold(prices, source, skip_db, require_db, database_secret_block)
     return prices

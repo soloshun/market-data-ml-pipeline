@@ -81,4 +81,4 @@ jobs:
             exit 1
           fi
           uv run --locked --no-dev prefect deploy --prefect-file ../prefect.yaml \
-            --name daily-market-data --name hourly-gold-bars --no-prompt
+            --name hourly-gold-bars --no-prompt

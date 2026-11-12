@@ -75,13 +75,15 @@ Local runs keep the optional Parquet snapshot under `BRONZE_DIR`. The hosted con
 
 ```mermaid
 flowchart LR
-    A["Prefect: every six hours"] --> B["Read last saved hourly timestamp"]
+    A["Prefect schedule"] --> B["Read last saved hourly timestamp"]
     B --> C["Fetch completed one-hour bars with overlap"]
-    C --> D["Validate UTC timestamps and OHLCV"]
+    C --> D["Validate UTC timestamps and OHLCV into Silver"]
     D --> E["Upsert hourly_prices by symbol and timestamp"]
+    E --> F["Calculate trailing features from stored Silver"]
+    F --> G["Upsert hourly_features and commit Silver and Gold together"]
 ```
 
-Start at [`ingest_hourly_gold`](../src/market_data/flows/hourly_ingestion.py), then read [`hourly_window`](../src/market_data/hourly.py) and [`load_hourly_prices`](../src/market_data/storage.py). Compare the hourly key `(symbol, bar_start_utc)` with the daily key `(symbol, trade_date)`. The hourly path does not roll up data or compute features yet.
+Start at [`ingest_hourly_gold`](../src/market_data/flows/hourly_ingestion.py), then read [`hourly_window`](../src/market_data/hourly.py), [`build_hourly_features`](../src/market_data/transform.py), and [`load_hourly_prices`](../src/market_data/storage.py). Compare the hourly key `(symbol, bar_start_utc)` with the daily key `(symbol, trade_date)`. The hourly moving averages use trailing bars, just as the daily moving averages use trailing sessions.
 
 ## Handoff to the ML workshop
 
