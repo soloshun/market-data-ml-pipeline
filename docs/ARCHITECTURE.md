@@ -69,7 +69,19 @@ The load task holds one database connection. It writes Silver, reads the stored 
 
 The transaction covers both Silver and Gold in either database. Local Parquet snapshots are written earlier and can survive database failure. PostgreSQL symbol locks coordinate writers using this pipeline. If two successful runs carry different source values for the same key, the later transaction can overwrite the earlier one. This is a latest-value dataset. Rerun timestamps and Bronze filenames change by design.
 
-Local runs keep the optional Parquet snapshot under `BRONZE_DIR`. The hosted configuration fetches fresh Yahoo Finance rows and sends them straight to validation. Silver is its first stored layer. The worker loads the Supabase URI from the Prefect Secret block named in the deployment parameters. To replay the exact original provider response in a later hosted version, add durable object storage for Bronze.
+Local runs keep the optional Parquet snapshot under `BRONZE_DIR`. The hosted configuration fetches fresh Yahoo Finance rows and sends them straight to validation. Silver is its first stored layer. The flow loads the Supabase URI from the Prefect Secret block named in the deployment parameters. To replay the exact original provider response in a later hosted version, add durable object storage for Bronze.
+
+## Hourly follow-up
+
+```mermaid
+flowchart LR
+    A["Prefect: every six hours"] --> B["Read last saved hourly timestamp"]
+    B --> C["Fetch completed one-hour bars with overlap"]
+    C --> D["Validate UTC timestamps and OHLCV"]
+    D --> E["Upsert hourly_prices by symbol and timestamp"]
+```
+
+Start at [`ingest_hourly_gold`](../src/market_data/flows/hourly_ingestion.py), then read [`hourly_window`](../src/market_data/hourly.py) and [`load_hourly_prices`](../src/market_data/storage.py). Compare the hourly key `(symbol, bar_start_utc)` with the daily key `(symbol, trade_date)`. The hourly path does not roll up data or compute features yet.
 
 ## Handoff to the ML workshop
 

@@ -161,11 +161,11 @@ Expect 3 bars on the first run and 12 distinct bars after the second. In Prefect
 uv run --locked prefect deployment run 'hourly-ingestion/hourly-gold-bars' --watch
 ```
 
-To repair an older window, pass both timestamps. For example, for the workshop date:
+To repair an older window, pass both timestamps. This example replays a completed day before class:
 
 ```sh
 uv run --locked prefect deployment run 'hourly-ingestion/hourly-gold-bars' \
-  --params '{"start_at":"2026-11-16T12:00:00Z","end_at":"2026-11-17T12:00:00Z"}' --watch
+  --params '{"start_at":"2026-11-10T06:00:00Z","end_at":"2026-11-11T06:00:00Z"}' --watch
 ```
 
 Verify the live row count and timestamps in the Supabase SQL Editor:

@@ -116,7 +116,7 @@ Open each run in Prefect. The first fails on attempt one, retries, and completes
 
 5. Check the automation activity and your inbox, then pause the demo automation. If email isn't available, use the run's Failed state and logs to teach how the trigger would work.
 
-For the later ML session, a 12:00 checkpoint can use completed bars to predict a price or return at 18:00. Four evenly spaced checkpoints keep the horizon at six hours, including 18:00 to midnight. Skip examples where the target hour has no market bar. The hourly table stores observations only; target construction, the time-based split, and model training come later.
+For the later ML session, a 12:00 checkpoint can use bars completed by noon to predict the close of the bar ending at 18:00, or the return between the two closes. Four evenly spaced checkpoints keep the horizon at six hours, including 18:00 to midnight. Skip examples where the target bar is missing. The hourly table stores observations only; target construction, the time-based split, and model training come later.
 
 [Prefect automation setup](https://www.prefect.io/docs/v3/how-to-guides/automations/creating-automations) · [Prefect email notifications](https://www.prefect.io/docs/v3/concepts/automations#sending-notifications-with-automations)
 
