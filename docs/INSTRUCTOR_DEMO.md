@@ -52,6 +52,8 @@ Identify `GC=F` as gold futures and the CSV as synthetic.
 
 Use notebook Sections 3 and 4 to show the duplicate-key check, inspect the features, and plot close, moving averages, and daily returns.
 
+For a five-minute schema drift demo, run Section 3a. Compare the Bronze metadata table, the rescued `VendorNote` values, and the error after removing `High`. Use the example rows in the [schema drift and metadata note](SCHEMA_DRIFT.md) to explain when to rescue a field, evolve the schema, or quarantine invalid rows.
+
 In `validation.py`, trace a date, the OHLC bounds, volume, and the duplicate check. In `features.py`, trace `shift(1)` and the windows over each symbol. Ask what a future observation could change about the displayed rows. Point out the first non-null five-observation mean and volatility. The 20-observation mean starts on observation 20.
 
 ## 25–35 · Load and query SQLite (10 minutes)

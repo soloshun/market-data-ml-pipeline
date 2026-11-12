@@ -182,6 +182,7 @@ Use `dev` for workshop changes and `main` for releases. Run the checks above on 
 The [hourly walkthrough](docs/DEPLOYMENT.md#7-collect-hourly-gold-bars) uses a separate flow for gold futures. Start locally with `uv run market-data hourly` to load 12 synthetic Silver bars and their Gold features into SQLite. The Cloud deployment collects completed one-hour bars at 06:00 and 12:00 Accra.
 
 - [60-minute instructor walkthrough](docs/INSTRUCTOR_DEMO.md)
+- [Schema drift, rescued data, quarantine, and Bronze metadata](docs/SCHEMA_DRIFT.md)
 - [Architecture and ML handoff](docs/ARCHITECTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Student assignment](docs/STUDENT_ASSIGNMENT.md)

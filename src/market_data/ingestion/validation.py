@@ -17,6 +17,22 @@ SOURCE_COLUMNS = {
 }
 
 
+def rescue_extra_columns(raw: pl.DataFrame) -> pl.DataFrame:
+    """Collect unfamiliar source fields in one JSON string per row.
+
+    Pass provider rows before attaching Bronze metadata. The six required
+    fields and the optional Adj Close field stay as ordinary columns.
+    """
+    recognized = SOURCE_COLUMNS.keys() | {"Adj Close"}
+    known = [name for name in raw.columns if name in recognized]
+    extra = [name for name in raw.columns if name not in recognized]
+    if extra:
+        rescued = pl.struct(extra).struct.json_encode()
+    else:
+        rescued = pl.repeat(None, pl.len(), dtype=pl.String)
+    return raw.select(*known, rescued.alias("_rescued_data"))
+
+
 def validate_prices(raw: pl.DataFrame, symbol: str, start: date, end: date) -> pl.DataFrame:
     """Validate one ticker's source rows and convert them to Silver prices.
 
