@@ -229,3 +229,8 @@ data/*.sqlite3*
 # Local implementation brief and instructor notes
 /CODEX_IMPLEMENTATION_BRIEF.md
 /docs/*.local.md
+
+# MLflow local tracking
+mlflow.db
+mlruns/
+mlartifacts/
