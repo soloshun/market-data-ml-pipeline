@@ -124,6 +124,60 @@ Suppose analysts decide `VendorNote` is useful. Agree what it means, then add a 
 
 That deliberate, reviewed change is **schema evolution**. Drift happens to you. Evolution is a decision you make. [Delta Lake schema evolution](https://docs.databricks.com/aws/en/data-engineering/schema-evolution)
 
+### Two ways to write a contract: Polars and Pydantic
+
+A **data contract** says which fields must exist, their types, and the rules they follow. Python has two popular ways to enforce one, and they suit different shapes of data:
+
+| | **Polars expressions** (this repo's Silver) | **Pydantic models** |
+| --- | --- | --- |
+| Checks | Whole columns at once | One record (object) at a time |
+| Best for | DataFrames: thousands to millions of rows | Config files, API requests and responses, messages, single records |
+| Speed on a large table | Fast: one vectorized pass | Slower: one Python object per row |
+| Error messages | One summary per rule, with example rows | Every field at fault, by name, for each record |
+| In this repo | [`validate_prices`](../src/market_data/ingestion/validation.py), `validate_hourly_prices` | Prefect validates flow parameters with it, and [`security/audit.py`](../security/audit.py) validates waiver records |
+
+**You are already using Pydantic.** Prefect checks every flow parameter against its type hint using Pydantic. Call the flow with `source="bogus"` and it fails before any task runs: *Input should be 'fixture' or 'yfinance'*.
+
+Here is the Silver price contract written as a Pydantic model. It's handy for checking one row, such as the quarantined row in Step 4, because it names every field at fault:
+
+```python
+from datetime import date
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class PriceBar(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # an unexpected field is an error
+
+    symbol: str
+    trade_date: date
+    open: float = Field(gt=0, allow_inf_nan=False)
+    high: float = Field(gt=0, allow_inf_nan=False)
+    low: float = Field(gt=0, allow_inf_nan=False)
+    close: float = Field(gt=0, allow_inf_nan=False)
+    volume: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def bounds_hold(self) -> "PriceBar":
+        if self.low > min(self.open, self.close) or self.high < max(self.open, self.close):
+            raise ValueError("low and high must bound open and close")
+        return self
+
+
+PriceBar(
+    symbol="XAUUSD-DEMO",
+    trade_date="2025-01-07",
+    open=2599,
+    high="unknown",
+    low=2593,
+    close=2598,
+    volume=1019,
+)
+# ValidationError: high: Input should be a valid number, unable to parse string as a number
+```
+
+**Rule of thumb:** use Polars, or a DataFrame library such as [Pandera](https://pandera.readthedocs.io/), for tables. Use [Pydantic](https://docs.pydantic.dev/) for records and configuration. Many pipelines use both: Pydantic at the edges, where JSON comes in from an API, and DataFrame checks once the data is a table.
+
 ## 4. Why Bronze matters here
 
 Every response above depends on having the original input:
@@ -153,6 +207,7 @@ Try one of these on a branch, with a test for each:
 2. **Build a real quarantine.** Change validation to *return* bad rows instead of raising. Write them to a `quarantine_prices` table with the reason and Bronze path, and let good rows continue. Decide what should happen if *every* row is bad.
 3. **Catch a meaning change at run time.** `test_download_options` already fails if someone removes `auto_adjust=False`. Add a second guard: log a warning when a Yahoo batch arrives without `Adj Close`, a hint that `Close` may already be adjusted. Explain to a classmate why this kind of drift never raises an error by itself.
 4. **Detect a rename.** Make validation suggest a likely match when a required field is missing, for example `high_price` instead of `High`.
+5. **Validate the quarantined row with Pydantic.** Turn the `PriceBar` model from §2 into a test. Feed it the `"unknown"` row from Step 4 and store Pydantic's field-level message as the quarantine reason.
 
 ## Further reading
 

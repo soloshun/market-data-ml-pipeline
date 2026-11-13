@@ -137,7 +137,7 @@ until_fixed = false
 The guardrails make waiving deliberate rather than easy:
 
 - **It's a code change.** Adding a waiver means opening a PR, so the decision is reviewed and stays in Git history. [`CODEOWNERS`](../.github/CODEOWNERS) asks the repository owner to review any change under `security/` or `.github/`.
-- **Every field is required.** CI fails if a waiver has no reason, no approver or no dates, or if it lasts more than 90 days.
+- **Every field is required.** A Pydantic model, `Waiver` in [`security/audit.py`](../security/audit.py), checks each entry. CI fails if a waiver has no reason, no approver or no dates, has a misspelled field, or lasts more than 90 days, and the error names every field at fault.
 - **It expires.** After the expiry date, CI stops applying it and the audit fails again, so someone must look at the advisory again.
 - **It's visible.** Every CI run lists the active waivers in the run summary, with who approved each one and why.
 - **It's narrow.** One waiver covers one advisory, together with its PYSEC or CVE aliases. Every other finding still fails.
