@@ -2,6 +2,23 @@
 
 Start with the [local daily notebook](../notebooks/01_historical_ingestion.ipynb) in one VS Code pane and the linked source files in the other. Keep one terminal for commands and one for local Prefect. The fixture is the default for the 60-minute lesson. Use the Cloud follow-up after students have seen daily Silver and Gold in SQLite.
 
+## Where this lesson fits
+
+| Session | Focus | Guide | Students practice with |
+| --- | --- | --- | --- |
+| 0 | Theory: pipeline anatomy, medallion, quality, ETL vs ELT | [Theory → Working Pipeline slides](https://gamma.app/docs/Theory-Working-Pipeline-s6v9hogx9py3t3s) | — |
+| 1 · this walkthrough | Local pipeline: Bronze, Silver, Gold, idempotency, Prefect, recovery | This page and the notebook | Warm-ups 1–3 |
+| 2 | Schema drift and data quality | [SCHEMA_DRIFT.md](SCHEMA_DRIFT.md) | Warm-ups 4–5 and 7–8 |
+| 3 | Security in a pipeline | [SECURITY.md](SECURITY.md) | The scavenger hunt in §2 and its exercises |
+| 4 | Release to production: PR → `main` → Prefect Cloud | [DEPLOYMENT.md](DEPLOYMENT.md), the `chore/hourly-six-hour-schedule` PR | Warm-ups 6, 9 and 10, then the assignment |
+| Lecture 9 | ML lifecycle: dataset, features, XGBoost and LightGBM, tuning | [ROADMAP.md](ROADMAP.md#sprint-2--machine-learning-lifecycle-lecture-9), [MLOPS.md](MLOPS.md) | — |
+| Lecture 10 | MLflow: tracking, registry, scheduled batch prediction | [ROADMAP.md](ROADMAP.md#sprint-3--from-experiment-to-batch-inference-lecture-10--mlflow) | — |
+| Lecture 11 | Spark, and pandas vs Polars | [ROADMAP.md](ROADMAP.md#sprint-4--single-machine-and-distributed-compute-lecture-11), notebook Section 7 | — |
+
+The warm-ups are in [STUDENT_ASSIGNMENT.md](STUDENT_ASSIGNMENT.md#part-1--warm-up-exercises). Leave parts of the code unexplained on purpose, and let students find them through the exercises. [CONCEPTS.md](CONCEPTS.md) gives them a map for reading on their own.
+
+> **Private notes:** files named `docs/*.local.md` are git-ignored. Use them for answers, timings or cohort notes you don't want in the student repository.
+
 ## Before class
 
 1. Open `cli.py`, `flows/historical_ingestion.py`, and the source, validation, feature, and storage modules under `ingestion/`.
@@ -52,7 +69,7 @@ Identify `GC=F` as gold futures and the CSV as synthetic.
 
 Use notebook Sections 3 and 4 to show the duplicate-key check, inspect the features, and plot close, moving averages, and daily returns.
 
-For a five-minute schema drift demo, run Section 3a. Compare the Bronze metadata, the rescued `VendorNote` values, and the invalid `High` row kept in the notebook's in-memory SQLite quarantine. Explain that hourly Silver stores the rescue payload, while the quarantine is a classroom example. The [schema drift and metadata note](SCHEMA_DRIFT.md) shows the same rows and explains when to evolve a schema.
+For a five-minute schema drift demo, run Section 3a. It shows four responses in order: Bronze metadata (*what arrived, and when?*), rescue (`VendorNote` is kept as JSON), fail fast (a missing `High` rejects the batch) and quarantine (one `"unknown"` row is set aside). Point out that the real flows rescue fields in hourly Silver and fail fast everywhere, while the quarantine is only a classroom example. Then ask: *which kind of drift raises no error at all?* The answer, a change in what `Close` means, is in [SCHEMA_DRIFT.md §1](SCHEMA_DRIFT.md#1-what-can-drift).
 
 In `validation.py`, trace a date, the OHLC bounds, volume, and the duplicate check. In `features.py`, trace `shift(1)` and the windows over each symbol. Ask what a future observation could change about the displayed rows. Point out the first non-null five-observation mean and volatility. The 20-observation mean starts on observation 20.
 

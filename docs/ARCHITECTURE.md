@@ -9,6 +9,19 @@ The local lesson runs `historical_ingestion.py` on daily bars and stores them in
 | Silver | Validate, sort and retain typed daily OHLCV | `validation.py`, `market_prices` |
 | Gold | Calculate daily percent return, trailing means and volatility | `features.py`, `market_features` |
 
+**Why three layers?** Each layer answers a different question. *Bronze:* what exactly did the source send, and when? *Silver:* which rows can we trust, in what types? *Gold:* what does the model or analyst need? Keeping them apart means a bug in a feature never forces you to re-download data, and a bad download never silently reaches a feature.
+
+### Who does what
+
+| Tool | Its job here | Not its job |
+| --- | --- | --- |
+| **Prefect** (`flows/`) | Order the steps, retry transient fetch errors, record logs and states, run on a schedule | Business rules. A task calls a plain function and logs the result |
+| **Polars** (`ingestion/`) | Parse, validate, sort and calculate features in memory | Remembering state between runs |
+| **SQLite / PostgreSQL** | Hold Silver and Gold, enforce keys and constraints, and commit both tables together | Calculating features |
+| **Parquet files** | Keep each raw Bronze snapshot exactly as received | Serving queries to downstream users |
+
+This split lets you unit-test every rule without Prefect or a database, and swap any one tool without rewriting the others.
+
 The source adapter unwraps pandas' date index and, if present, the requested ticker from a two-level column index. It then hands the data to Polars. Bronze preserves the provider fields after this structural normalization. Polars converts dates to session calendar dates, sorts by symbol and date, and rejects a batch with missing fields, out-of-window dates, invalid OHLCV or duplicate keys. An invalid batch can leave Bronze available for investigation. Silver and Gold for that run are unwritten.
 
 ## Read the code in this order

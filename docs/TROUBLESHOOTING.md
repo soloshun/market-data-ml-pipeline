@@ -3,6 +3,8 @@
 | Symptom | What to check |
 | --- | --- |
 | `uv` or Python unavailable | Install uv, restart the terminal, and run `uv python install 3.12` then `uv sync --locked`. The project pins the Python minor version in `.python-version`. Run from the repository root. PowerShell uses `Copy-Item` and `$env:NAME = 'value'`. |
+| Notebook says `No module named 'market_data'` or `polars` | The kernel isn't the project environment. Run `uv sync --locked --group notebook`, then choose **Select Kernel → Python Environments → .venv** in VS Code and restart the kernel. |
+| Notebook Section 6 fails with *connection refused* or hangs | `local_api_url` points to `http://127.0.0.1:4200/api` but no server is running. Start the [local server](../README.md#prefect-ui-and-local-daily-schedule), or set `local_api_url = None` to use a temporary server. |
 | No local SQLite rows | Run `uv run market-data run --source fixture` from the project root. `--skip-db` is preview mode. Check the path printed in the run log or by `market-data counts`. |
 | Supabase timeout or unreachable host | Direct Supabase connections typically need IPv6. Copy the Session pooler URI from Connect for an IPv4-only network and confirm your network permits outbound PostgreSQL traffic. |
 | SSL or password error | Use the PostgreSQL URI from Connect, URL-encode special characters in the password and use `sslmode=require` or `verify-full` with the correct CA. Use `sslmode=disable` only for a local loopback test server. |
@@ -14,6 +16,8 @@
 | Prefect UI keeps retrying | Check `http://127.0.0.1:4200/api/health` for `true`. Then open `http://127.0.0.1:4200/ui-settings` and check that `api_url` is `http://127.0.0.1:4200/api`. If it points to Cloud, restart the server with the [local Prefect settings](../README.md#prefect-ui-and-local-daily-schedule), then reload the dashboard. |
 | Prefect UI shows no run | Set `PREFECT_API_URL` to the local URL ending in `/api` in the run terminal. Make sure a local profile or exported URL points to the intended server. Allow loopback connections if the runtime is sandboxed. |
 | Prefect deployment stays scheduled or late | Keep `market-data serve` or the Process worker running against the same API as its deployment. Check the pool name, worker status, schedule status, and configured timezone. Starting a server alone provides the API and UI. |
+| `test_managed_pool_pins_match_the_lockfile` fails | A dependency changed in `uv.lock` but not in `prefect.yaml`. Copy the locked version from the test message into `work_pool.job_variables.pip_packages`. The Managed pool installs exactly those pins. |
+| Cloud run fails with `ModuleNotFoundError` | The Managed pool installs only `pip_packages` from `prefect.yaml`. Add the missing runtime package, pinned to the `uv.lock` version, and release again. |
 | Cloud worker cannot clone or load the project | Check private Git access on the worker, the deployment's Git revision and pool, and whether the worker synced the current lockfile. |
 | `prefect block ls` fails to connect after Cloud login | Run `prefect config view --show-sources` and check the effective `PREFECT_API_URL`. Clear localhost terminal exports and comment out the localhost URL in the project’s `.env` to use your saved Cloud profile. [Cloud terminal setup](DEPLOYMENT.md#3-set-up-prefect-cloud) |
 | Cloud run cannot load the database Secret block | In the same Prefect workspace as the deployment, create a Secret block named `market-data-supabase-url` containing the Supabase PostgreSQL URI. Check the worker can read the block. |
