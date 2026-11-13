@@ -13,7 +13,7 @@ The local notebook teaches ingestion with a synthetic daily fixture. The MLOps l
 | 00:00, 06:00, 12:00, 18:00 | `hourly-ingestion` loads completed bars into Silver and Gold | Built. The [schedule PR](DEPLOYMENT.md#1-how-a-change-reaches-production) switches it from 06:00 and 12:00 daily to this cadence |
 | About 15 minutes later | A prediction flow loads the current champion model, reads the latest Gold row and forecasts the next six hours | MLOps sessions |
 | Six hours after each forecast | A scoring step stores the actual return next to the forecast | MLOps sessions |
-| Saturday 02:00 (`0 2 * * 6`), market closed | A training flow tunes a new XGBoost model and sends it through the [production gate](#the-production-gate) | MLOps sessions |
+| Saturday 02:00 (`0 2 * * 6`), market closed | A training flow tunes XGBoost and LightGBM, keeps the better one, and sends it through the [production gate](#the-production-gate) | MLOps sessions |
 
 The 15-minute gap gives ingestion time to finish. A sturdier design triggers the prediction flow when ingestion **completes**, using a Prefect automation or a deployment trigger, instead of guessing a delay. Comparing the two designs makes a good class discussion.
 
@@ -56,14 +56,15 @@ In class we use MLflow the way most tutorials do. In production we copy MLflow's
 | Who promotes | You, after comparing runs in the MLflow UI | The weekly training flow, through the production gate |
 | Training cadence | When you run the notebook | Weekly, on Saturday |
 
-**Why save the trained model and not just the parameters?** Hyperparameters such as `max_depth=4` are the *recipe*. The trained trees are the *result*. With only the recipe, the prediction flow would have to retrain every six hours, and it might get a slightly different model each time. XGBoost can save a trained model as JSON (`model.get_booster().save_raw("json")`), and a model with a few hundred shallow trees fits comfortably in a `jsonb` column. The prediction flow loads that exact model, so you **deploy exactly what you tested**.
+**Why save the trained model and not just the parameters?** Hyperparameters such as `max_depth=4` are the *recipe*. The trained trees are the *result*. With only the recipe, the prediction flow would have to retrain every six hours, and it might get a slightly different model each time. Both libraries can save a trained model as text: XGBoost as JSON (`model.get_booster().save_raw("json")`) and LightGBM as a model string (`model.booster_.model_to_string()`). A few hundred shallow trees fit comfortably in a `text` column. The prediction flow loads that exact model, so you **deploy exactly what you tested**.
 
 A sketch of the table, to finish in class:
 
 ```sql
 CREATE TABLE IF NOT EXISTS market_data.model_registry (
     model_id bigserial PRIMARY KEY,
-    model_name text NOT NULL,                -- for example 'gc_6h_xgboost'
+    model_name text NOT NULL,                -- the forecast, for example 'gc_6h_return'
+    model_family text NOT NULL CHECK (model_family IN ('xgboost', 'lightgbm')),
     trained_at timestamptz NOT NULL DEFAULT now(),
     train_start_utc timestamptz NOT NULL,    -- the data the model learned from
     train_end_utc timestamptz NOT NULL,
@@ -71,8 +72,8 @@ CREATE TABLE IF NOT EXISTS market_data.model_registry (
     feature_columns jsonb NOT NULL,          -- order matters at prediction time
     hyperparameters jsonb NOT NULL,          -- the winner of the grid search
     metrics jsonb NOT NULL,                  -- cv, candidate, champion and baseline MAE
-    model_json jsonb NOT NULL,               -- the trained XGBoost model
-    xgboost_version text NOT NULL,
+    model_text text NOT NULL,                -- the trained model, saved by its library
+    library_version text NOT NULL,           -- load with the same version
     code_revision text NOT NULL,             -- git commit of the training code
     status text NOT NULL CHECK (status IN ('champion', 'rejected', 'retired')),
     decision text NOT NULL                   -- why the gate accepted or rejected it
@@ -83,7 +84,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_champion_per_model
     ON market_data.model_registry (model_name) WHERE status = 'champion';
 ```
 
-Rejected models stay in the table. A record of what *didn't* ship is as useful as the record of what did. Every column maps to an MLflow idea: a run (row), params (`hyperparameters`), metrics (`metrics`), an artifact (`model_json`), a registry alias (`status`). Students who understand this table understand the MLflow Model Registry.
+Rejected models stay in the table. A record of what *didn't* ship is as useful as the record of what did. Every column maps to an MLflow idea: a run (row), params (`hyperparameters`), metrics (`metrics`), an artifact (`model_text`), a registry alias (`status`). Students who understand this table understand the MLflow Model Registry.
 
 ## The production gate
 
@@ -92,7 +93,7 @@ A new model goes to production only if it is **measurably better** than the mode
 ```mermaid
 flowchart TD
     A["Saturday: build the dataset<br/>from Silver and Gold"] --> B["Hold out the gate window:<br/>checkpoints since the champion's training cutoff"]
-    B --> C["GridSearchCV with time-series folds<br/>on the data before the gate window"]
+    B --> C["GridSearchCV for XGBoost and LightGBM<br/>on the data before the gate window.<br/>Keep the better one as the candidate"]
     C --> D["Score on the gate window:<br/>candidate, current champion, zero-return baseline"]
     D --> E{"Passes every<br/>gate rule?"}
     E -->|"Yes"| F["Insert as champion,<br/>retire the old one,<br/>in one transaction"]
@@ -106,7 +107,41 @@ flowchart TD
 3. **Beat the champion by a margin**, for example 2 % lower MAE. A tiny win on one noisy week isn't evidence. On the first run there is no champion, so rule 2 decides alone.
 4. **Sanity checks.** Enough gate examples (for example at least 15 checkpoints), no missing predictions, and the same feature columns that the prediction flow will send.
 
-**Tuning stays simple.** Use scikit-learn's `GridSearchCV` with `TimeSeriesSplit(gap=6)` over a small grid, for example `max_depth` × `learning_rate` × `n_estimators`, which is 2 × 3 × 2 = 12 combinations. The `gap` leaves six bars between each training fold and its validation fold, so six-hour targets never leak across the boundary.
+### Tune two models, pick one
+
+Run the **same** search on both libraries, so the comparison is fair: the same features, the same folds and the same metric. Eight combinations each keeps it fast and easy to read.
+
+| | XGBoost grid | LightGBM grid |
+| --- | --- | --- |
+| Tree size | `max_depth`: 2, 4 | `num_leaves`: 7, 15 |
+| Step size | `learning_rate`: 0.03, 0.1 | `learning_rate`: 0.03, 0.1 |
+| Number of trees | `n_estimators`: 200, 400 | `n_estimators`: 200, 400 |
+
+XGBoost limits tree **depth**. LightGBM grows trees leaf by leaf, so it limits the number of **leaves** instead. A depth-3 tree has at most 8 leaves, so the two grids cover similar sizes.
+
+```python
+folds = TimeSeriesSplit(n_splits=4, gap=1)  # gap: rows inside one six-hour target
+searches = {
+    "xgboost": GridSearchCV(XGBRegressor(), xgb_grid, cv=folds,
+                            scoring="neg_mean_absolute_error"),
+    "lightgbm": GridSearchCV(LGBMRegressor(verbose=-1), lgbm_grid, cv=folds,
+                             scoring="neg_mean_absolute_error"),
+}
+for search in searches.values():
+    search.fit(X_train, y_train)
+```
+
+Set `gap` to the number of rows that fit inside one six-hour target, so a training label never overlaps the validation fold. That is 1 with one row per six-hour checkpoint, or 6 if you build a row every hour.
+
+Then compare the two winners in one table:
+
+| Model | CV MAE (± spread across folds) | RMSE | Direction hit rate | Fit time | vs zero baseline |
+| --- | --- | --- | --- | --- | --- |
+| Zero-return baseline | … | … | n/a | 0 s | — |
+| XGBoost, best settings | … | … | … | … | … |
+| LightGBM, best settings | … | … | … | … | … |
+
+Pick the lower MAE. If the two are within one standard deviation of each other, the difference is probably noise, so prefer the faster or simpler model. The weekly production flow runs the same comparison, so the champion can switch from one library to the other over time.
 
 **Rollback** is two small updates in one transaction: retire the current champion, then set the previous model back to `champion`. The unique index forces that order. The next prediction run picks it up.
 
