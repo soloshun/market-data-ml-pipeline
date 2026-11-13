@@ -13,6 +13,15 @@ Checked items exist in the project. Unchecked items are class demos or planned w
 | 3 | Lecture 10 | MLflow: tracking, packaging, registry, serving and batch inference | [MLOPS.md](MLOPS.md) | Planned |
 | 4 | Lecture 11 | Spark, single machine vs distributed, pandas vs Polars | Notebook Section 7 | Partly built |
 
+## Session calendar
+
+| Session | Plan | Roadmap |
+| --- | --- | --- |
+| Tuesday, Nov 17 | Merge [PR #2](https://github.com/soloshun/market-data-ml-pipeline/pull/2) live, show the new Prefect schedule, and leave time for questions. | Sprint 1 wrap-up |
+| Thursday, Nov 19 | Give students most of the session to share what they built. Close with a short MLOps introduction, with no coding. | Student projects, Sprint 2 framing |
+| Tuesday, Nov 24 | Walk through one forecasting example from hourly data to features, tuning, model selection, and inference. | Sprints 2–3 |
+| Tuesday, Dec 1 | Use the full session to build that workflow together. | Sprints 2–3 |
+
 ```mermaid
 flowchart LR
     A["Sprint 1<br/>Ingest, validate, operate"] --> B["Sprint 2 · L9<br/>Build and evaluate a forecast"]
@@ -39,7 +48,7 @@ flowchart LR
 - [x] **Handle changes at the source.** The [schema drift lesson](SCHEMA_DRIFT.md) covers the kinds of drift and four responses: rescue, fail fast, quarantine and evolve. Hourly Silver persists `_rescued_data` on `dev`. Apply the [additive Supabase schema change](DEPLOYMENT.md#2-set-up-supabase) before releasing it. Quarantine is a notebook exercise.
 - [x] **Verify, release, and protect credentials.** The locked `uv` environment and fixture tests support local rehearsals. Develop on `dev`, review a release PR into `main`, and use GitHub Actions to run checks and release to Prefect when enabled. Store the Supabase URI in a Prefect Secret block and the Prefect key in GitHub Actions secrets. See the [deployment guide](DEPLOYMENT.md), which shows both terminal and UI routes.
 - [x] **Security gate.** On every PR into `main`, the dependency audit fails the checks when a locked package has a known vulnerability. See the [security walkthrough](SECURITY.md).
-  - [ ] Turn on the `protect-main` ruleset ([SECURITY.md §4](SECURITY.md#4-make-the-security-check-block-the-merge)). Without it, a failing check doesn't stop the Merge button.
+  - [x] Turn on the `protect-main` ruleset ([SECURITY.md §4](SECURITY.md#4-make-the-security-check-block-the-merge)). Without it, a failing check doesn't stop the Merge button.
 - [ ] **Finish the code walkthrough.** Cover the remaining modules with the [reading order](ARCHITECTURE.md#read-the-code-in-this-order). Leave some parts for students to discover through the [warm-up exercises](STUDENT_ASSIGNMENT.md#part-1--warm-up-exercises).
 - [ ] **Class wrap-up: push to production.** Use the [schedule PR](https://github.com/soloshun/market-data-ml-pipeline/pull/2) to move from 06:00 and 12:00 daily to 00:00, 06:00, 12:00 and 18:00 on weekdays in Accra. Review the diff, watch **checks**, merge, watch **deploy**, then compare the deployed commit and schedule in Prefect. Show how to pause or resume and inspect a catch-up run. If time allows, demonstrate a scoped failure alert. Leave time for questions and [student projects](STUDENT_ASSIGNMENT.md).
 
@@ -51,12 +60,13 @@ Begin with a short walkthrough and discussion. Trace acquisition and cleaning ba
 
 - [ ] **Frame the problem.** Predict the six-hour percentage return of `GC=F` at each weekday checkpoint (00:00, 06:00, 12:00, 18:00 UTC). For a noon prediction, use only completed bars, the last one starting at 11:00, and aim at the close of the bar ending at 18:00. To show a price, multiply the latest close by one plus the predicted return. Returns are easier to model than raw prices because their scale doesn't drift with the gold price. Skip historical examples when the exact target is missing. Six observed rows can span more than six clock hours.
 - [ ] **Assemble and explore the dataset.** Join hourly Silver and Gold as shown in the [MLOps handoff](MLOPS.md). Freeze the input snapshot and record its source, query, and date range. Plot closes and returns, inspect gaps and warm-up nulls, and count usable examples at each checkpoint. Stored bars can include provider revisions, so the snapshot alone does not prove what was available historically at every checkpoint. Prepare a longer synthetic hourly sample for anyone without Supabase access. The short ingestion fixture is only for smoke tests.
+- [ ] **Explore before modelling (EDA).** Plot the distribution of six-hour returns and compare it with a normal curve. Gold has fat tails. Check autocorrelation of returns at lags 1–24, average volatility by hour of day and day of week, and where the gaps and market closures fall. Each finding should suggest a feature or rule out an idea. Keep the plots in the training notebook so the reasons behind the feature choices are recorded.
 - [ ] **Add features in Gold, not in the notebook.** Extend `build_hourly_features` so training and prediction use the same code. This avoids training/serving skew, where the model sees features computed one way in training and another way in production. Every feature must be trailing, using only the current and earlier bars. Candidates, roughly from simplest:
   - lagged returns over 1, 2, 3 and 6 bars, and the 6- and 24-bar momentum
   - distance from trend: `close / sma_20 − 1`
   - 20-bar volatility and the bar range `(high − low) / close`
   - volume relative to its 20-bar mean
-  - sine and cosine of the UTC hour, and the day of week, to show why 23:00 and 00:00 are close on a clock
+  - **cyclical time features:** sine and cosine of the UTC hour (`sin(2π·hour/24)`, `cos(2π·hour/24)`) and of the weekday. A plain hour number tells the model that 23:00 and 00:00 are far apart. On a circle they are neighbours
 
   Adding columns to `hourly_features` is a deliberate **schema evolution**. Update both SQL schemas, the upsert and the tests together, as described in [SCHEMA_DRIFT.md](SCHEMA_DRIFT.md#step-5--evolve-the-schema-on-purpose). Compare the model with and without the new features on the same validation dates.
 - [ ] **Train and compare models.** Start with a zero-return baseline, then train **XGBoost** and **LightGBM** on the same features and splits. Split by time, never randomly, and leave a six-hour gap at split boundaries so labels don't overlap the next split. Report mean absolute error in percentage points on an untouched test period. If no model beats the baseline, show the results anyway and keep the baseline as the default for the demo. That outcome is a useful lesson too.
