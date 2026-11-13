@@ -42,9 +42,76 @@ Historical training examples need both an eligible input bar and the exact targe
 2. Split examples **chronologically**, never randomly, and leave a six-hour gap at the split so training targets don't overlap the test period. Compare the first model against a zero-return baseline.
 3. Record the feature columns, target, split, model version and test metrics. Use the same feature code at training and prediction time.
 
+## Features to try
+
+Keep the list short. A small set of features you can explain beats fifty you can't. Every feature uses only the current and earlier bars, and every one is a **ratio or a return**, not a raw price. Tree models such as XGBoost and LightGBM can't extrapolate, so a model trained when gold was 2,000 has never seen a raw price of 3,000. A ratio means the same thing at any price level.
+
+| Feature | How | Why it might help | In Gold today? |
+| --- | --- | --- | --- |
+| Last return | `hourly_return` | The most recent move | ✅ |
+| Lagged returns | returns 2, 3 and 6 bars ago | Do moves continue or reverse? | Add |
+| Momentum | return over the last 6 bars | Same length as the forecast horizon | Add |
+| Distance from trend | `close / sma_20 − 1` | How stretched the price is from its recent average | Add, from the existing `sma_20` |
+| Volatility | `volatility_5`, plus a 20-bar version | Big moves cluster together | ✅ 5-bar, add 20-bar |
+| Bar range | `(high − low) / close` | Volatility *inside* the hour, from data we already store | Add |
+| Relative volume | `volume / mean(volume over 20 bars)` | Unusual activity often comes with news | Add |
+| Hour of day | `hour_sin`, `hour_cos` | Asian, London and New York sessions behave differently | Add |
+| Day of week | `weekday_sin`, `weekday_cos` | Mondays follow a weekend gap | Add |
+
+**Leave for later:** dozens of technical indicators (RSI, MACD and so on), other markets, and news data. Add one only when EDA gives you a reason, and keep it only if it beats the model without it on the same validation dates.
+
+### Why time needs sine and cosine
+
+A model only sees numbers. If you give it the hour as one number, 23:00 becomes `23` and 00:00 becomes `0`. To the model they look as far apart as two hours can be, when in reality they are one hour apart. The same happens with weekdays: Sunday `6` and Monday `0`.
+
+![Left: hours on a straight line, where 23:00 and 00:00 are 23 apart. Right: hours on a circle using sine and cosine, where 23:00 and 00:00 are neighbours, 0.26 apart.](assets/cyclical_time.png)
+
+Putting the hour on a clock face fixes this. Each hour becomes a point on a circle with two coordinates:
+
+```python
+hour_sin = sin(2 * pi * hour / 24)
+hour_cos = cos(2 * pi * hour / 24)
+```
+
+| Hour | Plain number | `hour_sin` | `hour_cos` |
+| --- | ---: | ---: | ---: |
+| 22:00 | 22 | −0.50 | 0.87 |
+| 23:00 | 23 | −0.26 | 0.97 |
+| 00:00 | 0 | 0.00 | 1.00 |
+| 01:00 | 1 | 0.26 | 0.97 |
+
+Now 23:00 and 00:00 differ by about as much as 00:00 and 01:00. **Why two columns?** Sine alone gives 01:00 and 11:00 the same value (0.26). Cosine tells them apart (0.97 vs −0.97). Together they give every hour a unique point. For weekdays, use `7` instead of `24`.
+
+**An honest caveat for class:** tree models split on thresholds, so they can often cope with a plain hour number. Cyclical features help most with linear models, neural networks and distance-based methods. Measure it with the with/without comparison rather than assuming. With only four checkpoints a day, the gain may be small. The habit still matters as soon as you predict every hour.
+
+Draw the figure yourself with `uv run --group notebook python docs/assets/cyclical_time.py`.
+
+## Deployment strategies
+
+Training a better model is half the job. The other half is replacing the running model **without breaking anything**. These four strategies come up in Databricks and most MLOps material:
+
+| Strategy | How it works | Rollback | In this project's batch setup |
+| --- | --- | --- | --- |
+| **Blue-green** | Keep two versions ready. Switch all traffic from the old one (blue) to the new one (green) at once | Switch back, which is instant | Move the MLflow `champion` alias from version 3 to version 4. Moving it back is the rollback |
+| **Canary** | Send a small share of traffic to the new version, watch it, then grow the share | Send the share back to zero | Let the new version forecast one checkpoint a day, for example 00:00, before giving it all four |
+| **Shadow** (dark launch) | The new version gets the same real inputs and its predictions are stored, but nobody uses them | Nothing to roll back | The `challenger` predicts every checkpoint next to the `champion`. Compare both once targets arrive. **The best first choice here** |
+| **A/B test** | Split users randomly between versions and compare a business outcome | End the test | Needs many users or decisions, so discuss it rather than build it |
+
+```mermaid
+flowchart LR
+    G["Latest Gold row<br/>at a checkpoint"] --> C1["champion<br/>(used)"]
+    G --> C2["challenger<br/>(shadow)"]
+    C1 --> F[("hourly_forecasts")]
+    C2 --> F
+    F --> S["Score both when<br/>the target arrives"]
+    S -->|"challenger wins<br/>for N checkpoints"| A["Move the champion alias"]
+```
+
+Batch prediction makes these strategies cheap: there is no live traffic to split, only checkpoints. The same ideas apply to a real-time API, where they need a load balancer or a serving platform. [MLflow model aliases](https://mlflow.org/docs/latest/ml/model-registry/)
+
 ## Topics saved for the MLOps sessions
 
-The [roadmap](ROADMAP.md) has the full plan for Lectures 9–11, covering features, XGBoost and LightGBM, tuning, MLflow, scheduled prediction and Spark.
+The [roadmap](ROADMAP.md) has the full plan for *End-to-end ML lifecycle*, *Automations using MLflow* and *Distributed vs single-thread compute*.
 
 - Experiment tracking and a model registry
 - Hyperparameter tuning with time-series cross-validation
