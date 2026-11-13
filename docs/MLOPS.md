@@ -11,7 +11,9 @@ The local notebook teaches ingestion with a synthetic daily fixture. The MLOps l
 | Every weekday at (Africa/Accra = UTC) | Flow | Status |
 | --- | --- | --- |
 | 00:00, 06:00, 12:00, 18:00 | `hourly-ingestion` loads completed bars into Silver and Gold | Built. The [schedule PR](DEPLOYMENT.md#1-how-a-change-reaches-production) switches it from 06:00 and 12:00 daily to this cadence |
-| About 15 minutes later | A prediction flow reads the latest Gold row and forecasts the next six hours | MLOps sessions |
+| About 15 minutes later | A prediction flow loads the current champion model, reads the latest Gold row and forecasts the next six hours | MLOps sessions |
+| Six hours after each forecast | A scoring step stores the actual return next to the forecast | MLOps sessions |
+| Saturday 02:00 (`0 2 * * 6`), market closed | A training flow tunes a new XGBoost model and sends it through the [production gate](#the-production-gate) | MLOps sessions |
 
 The 15-minute gap gives ingestion time to finish. A sturdier design triggers the prediction flow when ingestion **completes**, using a Prefect automation or a deployment trigger, instead of guessing a delay. Comparing the two designs makes a good class discussion.
 
@@ -41,6 +43,74 @@ Historical training examples need both an eligible input bar and the exact targe
 1. Build one example per checkpoint from a **fixed snapshot** of the hourly tables. Record the query, the data window and the snapshot date. The live tables can change as Yahoo revises bars.
 2. Split examples **chronologically**, never randomly, and leave a six-hour gap at the split so training targets don't overlap the test period. Compare the first model against a zero-return baseline.
 3. Record the feature columns, target, split, model version and test metrics. Use the same feature code at training and prediction time.
+
+## Where the model lives: local vs production
+
+In class we use MLflow the way most tutorials do. In production we copy MLflow's ideas into Supabase, because a Prefect Managed worker has no MLflow server and its disk disappears after each run. This is the same reason the Cloud ingestion flow skips Bronze.
+
+| | Local, in class | Production, in Prefect Cloud |
+| --- | --- | --- |
+| Experiment tracking | MLflow with a SQLite backend (`mlflow.db`) and a local artifacts folder | One row per training run in `market_data.model_registry` |
+| What is saved | The MLflow model, its parameters and metrics | The **trained model as JSON**, plus hyperparameters, feature list, metrics and git commit |
+| Which model runs | The MLflow alias `champion` | The row whose `status` is `champion` |
+| Who promotes | You, after comparing runs in the MLflow UI | The weekly training flow, through the production gate |
+| Training cadence | When you run the notebook | Weekly, on Saturday |
+
+**Why save the trained model and not just the parameters?** Hyperparameters such as `max_depth=4` are the *recipe*. The trained trees are the *result*. With only the recipe, the prediction flow would have to retrain every six hours, and it might get a slightly different model each time. XGBoost can save a trained model as JSON (`model.get_booster().save_raw("json")`), and a model with a few hundred shallow trees fits comfortably in a `jsonb` column. The prediction flow loads that exact model, so you **deploy exactly what you tested**.
+
+A sketch of the table, to finish in class:
+
+```sql
+CREATE TABLE IF NOT EXISTS market_data.model_registry (
+    model_id bigserial PRIMARY KEY,
+    model_name text NOT NULL,                -- for example 'gc_6h_xgboost'
+    trained_at timestamptz NOT NULL DEFAULT now(),
+    train_start_utc timestamptz NOT NULL,    -- the data the model learned from
+    train_end_utc timestamptz NOT NULL,
+    gate_start_utc timestamptz NOT NULL,     -- the window the gate scored it on
+    feature_columns jsonb NOT NULL,          -- order matters at prediction time
+    hyperparameters jsonb NOT NULL,          -- the winner of the grid search
+    metrics jsonb NOT NULL,                  -- cv, candidate, champion and baseline MAE
+    model_json jsonb NOT NULL,               -- the trained XGBoost model
+    xgboost_version text NOT NULL,
+    code_revision text NOT NULL,             -- git commit of the training code
+    status text NOT NULL CHECK (status IN ('champion', 'rejected', 'retired')),
+    decision text NOT NULL                   -- why the gate accepted or rejected it
+);
+
+-- The database itself guarantees there is never more than one champion.
+CREATE UNIQUE INDEX IF NOT EXISTS one_champion_per_model
+    ON market_data.model_registry (model_name) WHERE status = 'champion';
+```
+
+Rejected models stay in the table. A record of what *didn't* ship is as useful as the record of what did. Every column maps to an MLflow idea: a run (row), params (`hyperparameters`), metrics (`metrics`), an artifact (`model_json`), a registry alias (`status`). Students who understand this table understand the MLflow Model Registry.
+
+## The production gate
+
+A new model goes to production only if it is **measurably better** than the model already running. Otherwise every weekly retrain would swap models on noise.
+
+```mermaid
+flowchart TD
+    A["Saturday: build the dataset<br/>from Silver and Gold"] --> B["Hold out the gate window:<br/>checkpoints since the champion's training cutoff"]
+    B --> C["GridSearchCV with time-series folds<br/>on the data before the gate window"]
+    C --> D["Score on the gate window:<br/>candidate, current champion, zero-return baseline"]
+    D --> E{"Passes every<br/>gate rule?"}
+    E -->|"Yes"| F["Insert as champion,<br/>retire the old one,<br/>in one transaction"]
+    E -->|"No"| G["Insert as rejected,<br/>with the reason.<br/>The champion keeps running"]
+```
+
+**The gate rules.** Keep them few and write them down:
+
+1. **Fair comparison.** Score the candidate and the current champion on the **same** checkpoints, ones that *neither* model trained on. The champion was trained up to its own cutoff, so the gate window starts there.
+2. **Beat the baseline.** The candidate's mean absolute error must be lower than always predicting a zero return.
+3. **Beat the champion by a margin**, for example 2 % lower MAE. A tiny win on one noisy week isn't evidence. On the first run there is no champion, so rule 2 decides alone.
+4. **Sanity checks.** Enough gate examples (for example at least 15 checkpoints), no missing predictions, and the same feature columns that the prediction flow will send.
+
+**Tuning stays simple.** Use scikit-learn's `GridSearchCV` with `TimeSeriesSplit(gap=6)` over a small grid, for example `max_depth` × `learning_rate` × `n_estimators`, which is 2 × 3 × 2 = 12 combinations. The `gap` leaves six bars between each training fold and its validation fold, so six-hour targets never leak across the boundary.
+
+**Rollback** is two small updates in one transaction: retire the current champion, then set the previous model back to `champion`. The unique index forces that order. The next prediction run picks it up.
+
+**Honest caveat for class:** a week of checkpoints is a small sample, so this gate will sometimes keep a model that is really worse, or reject one that is really better. Real teams use longer windows, statistical tests, or a shadow period. See [deployment strategies](#deployment-strategies). The point here is the habit: **no model reaches production without being compared with the one already there.**
 
 ## Features to try
 
