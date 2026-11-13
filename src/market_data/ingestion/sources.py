@@ -41,7 +41,7 @@ def normalize_yahoo(raw: pd.DataFrame, symbol: str) -> pl.DataFrame:
             raise ValueError(f"{symbol}: could not locate the ticker in Yahoo's columns.")
         raw = raw.xs(symbol, axis=1, level=ticker_levels[0])
     if not isinstance(raw.index, pd.DatetimeIndex):
-        raise ValueError(f"{symbol}: Yahoo's row index must contain daily timestamps.")
+        raise ValueError(f"{symbol}: Yahoo's row index must contain timestamps.")
     if not raw.columns.is_unique or "Date" in raw.columns:
         raise ValueError(f"{symbol}: Yahoo returned duplicate or conflicting columns.")
     # Preserve the session's calendar date even if the index is timezone-aware.

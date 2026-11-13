@@ -85,7 +85,8 @@ def validate_and_transform(batches: Frames, windows: Windows) -> tuple[pl.DataFr
     )
     features = build_features(prices)
     get_run_logger().info(
-        "Validated %d Silver rows. Prepared %d Gold preview rows. Rejected/dropped 0 rows.",
+        "Validated %d Silver rows and prepared %d Gold preview rows. "
+        "No rows were dropped: one invalid row would have failed the whole batch.",
         prices.height,
         features.height,
     )
