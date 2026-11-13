@@ -46,14 +46,17 @@ def test_active_waivers_become_uv_audit_flags(tmp_path):
 def test_expired_waiver_is_not_applied(tmp_path):
     active, expired = audit.load_waivers(waiver_file(tmp_path), date(2027, 1, 16))
     assert active == []
-    assert [waiver["id"] for waiver in expired] == ["GHSA-aaaa-bbbb-cccc"]
+    assert [waiver.id for waiver in expired] == ["GHSA-aaaa-bbbb-cccc"]
 
 
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
         ({"reason": '""'}, "reason"),
-        ({"reason": '"not a risk"'}, "full sentence"),
+        ({"reason": '"not a risk"'}, "at least 20 characters"),
+        ({"id": '"not an advisory"'}, "0 → id: String should match pattern"),
+        ({"until_fixed": '"no"'}, "until_fixed"),
+        ({"expiry": "2027-01-01"}, "Extra inputs"),
         ({"approved_by": "42"}, "approved_by"),
         ({"expires": "2027-03-01"}, "90 days"),
         ({"expires": "2026-10-01"}, "90 days"),
@@ -62,3 +65,10 @@ def test_expired_waiver_is_not_applied(tmp_path):
 def test_incomplete_or_open_ended_waivers_are_rejected(tmp_path, overrides, message):
     with pytest.raises(ValueError, match=message):
         audit.load_waivers(waiver_file(tmp_path, **overrides), TODAY)
+
+
+def test_the_same_advisory_cannot_be_waived_twice(tmp_path):
+    path = waiver_file(tmp_path)
+    path.write_text(path.read_text() * 2)
+    with pytest.raises(ValueError, match="repeated: GHSA-aaaa-bbbb-cccc"):
+        audit.load_waivers(path, TODAY)
