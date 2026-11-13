@@ -142,6 +142,7 @@ Tune both libraries with the **same** folds, metric and trial budget, so the com
 ```python
 folds = TimeSeriesSplit(n_splits=4, gap=1)
 
+
 def objective(trial, family):
     if family == "xgboost":
         params = {
@@ -157,17 +158,20 @@ def objective(trial, family):
             "n_estimators": trial.suggest_int("n_estimators", 100, 600, step=100),
         }
         model = LGBMRegressor(verbose=-1, **params)
-    mae = -cross_val_score(model, X_train, y_train, cv=folds,
-                           scoring="neg_mean_absolute_error").mean()
+    mae = -cross_val_score(
+        model, X_train, y_train, cv=folds, scoring="neg_mean_absolute_error"
+    ).mean()
     with mlflow.start_run(nested=True):
         mlflow.log_params(params)
         mlflow.log_metric("cv_mae", mae)
     return mae
 
+
 for family in ("xgboost", "lightgbm"):
     with mlflow.start_run(run_name=family):
-        study = optuna.create_study(direction="minimize",
-                                    sampler=optuna.samplers.TPESampler(seed=42))
+        study = optuna.create_study(
+            direction="minimize", sampler=optuna.samplers.TPESampler(seed=42)
+        )
         study.optimize(lambda trial: objective(trial, family), n_trials=30)
         mlflow.log_params(study.best_params)
         mlflow.log_metric("best_cv_mae", study.best_value)
