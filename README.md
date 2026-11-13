@@ -229,7 +229,7 @@ To rehearse the hourly flow locally, run `uv run market-data hourly`. It loads 1
 | Guide | For | What's inside |
 | --- | --- | --- |
 | [Theory slides](https://gamma.app/docs/Theory-Working-Pipeline-s6v9hogx9py3t3s) | Everyone | Data engineering foundations, before the code |
-| [Roadmap](docs/ROADMAP.md) | Everyone | What's done, and the plan for Lectures 9–11 |
+| [Roadmap](docs/ROADMAP.md) | Everyone | What's done, and the plan for the ML lifecycle, MLflow and compute lectures |
 | [Architecture](docs/ARCHITECTURE.md) | Everyone | Layers, reading order, transactions, the hourly design |
 | [Schema drift](docs/SCHEMA_DRIFT.md) | Everyone | Kinds of drift; rescue, fail fast, quarantine, evolve |
 | [Security](docs/SECURITY.md) | Everyone | What we protect, controls in this repo, leaked-secret response |

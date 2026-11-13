@@ -6,12 +6,13 @@ Checked items exist in the project. Unchecked items are class demos or planned w
 
 **Guiding rule:** keep every step runnable on a laptop with free tiers. Add one new idea at a time and reuse what already exists. For example, new features go into the existing Gold table, and the prediction flow copies the ingestion flow's structure.
 
-| Sprint | Lecture | Topic | Main guide | Status |
+| Sprint | Lecture | What it covers | Main guide | Status |
 | --- | --- | --- | --- | --- |
-| 1 | Data engineering sessions | Ingest, validate, store, orchestrate, release | [Theory slides](https://gamma.app/docs/Theory-Working-Pipeline-s6v9hogx9py3t3s), [notebook](../notebooks/01_historical_ingestion.ipynb) | Wrapping up |
-| 2 | Lecture 9 | Machine learning lifecycle: dataset, features, models, tuning | [MLOPS.md](MLOPS.md) | Planned |
-| 3 | Lecture 10 | MLflow: tracking, packaging, registry, serving and batch inference | [MLOPS.md](MLOPS.md) | Planned |
-| 4 | Lecture 11 | Spark, single machine vs distributed, pandas vs Polars | Notebook Section 7 | Partly built |
+| 1 | **Data engineering and DataOps** | Ingest, validate, store, orchestrate, release | [Theory slides](https://gamma.app/docs/Theory-Working-Pipeline-s6v9hogx9py3t3s), [notebook](../notebooks/01_historical_ingestion.ipynb) | Wrapping up |
+| 2 | **End-to-end ML lifecycle** | Dataset, EDA, features, XGBoost and LightGBM, tuning | [MLOPS.md](MLOPS.md) | Planned |
+| 3 | **Automations using MLflow** | Tracking, registry, deployment strategies, scheduled prediction | [MLOPS.md](MLOPS.md#deployment-strategies) | Planned |
+| 4 | **Distributed vs single-thread compute** | Spark, pandas vs Polars, when to distribute | Notebook Section 7 | Partly built |
+| 5 | **Business dashboard with AI coding agents** *(optional)* | A Next.js dashboard over everything built so far | [Sprint 5](#sprint-5--business-dashboard-with-ai-coding-agents-optional) | Optional |
 
 ## Session calendar
 
@@ -24,9 +25,10 @@ Checked items exist in the project. Unchecked items are class demos or planned w
 
 ```mermaid
 flowchart LR
-    A["Sprint 1<br/>Ingest, validate, operate"] --> B["Sprint 2 · L9<br/>Build and evaluate a forecast"]
-    B --> C["Sprint 3 · L10<br/>Track, register, predict on schedule"]
-    C --> D["Sprint 4 · L11<br/>Compare compute choices"]
+    A["Data engineering<br/>and DataOps"] --> B["End-to-end<br/>ML lifecycle"]
+    B --> C["Automations<br/>using MLflow"]
+    C --> D["Distributed vs<br/>single-thread compute"]
+    D -.-> E["Optional: business<br/>dashboard"]
 ```
 
 **Where it ends up:** every weekday at 00:00, 06:00, 12:00 and 18:00 (Accra = UTC), ingestion loads the latest completed hourly bars. A few minutes after it finishes, a prediction flow forecasts the next six hours and stores the forecast. When the six hours have passed, the forecast is scored against what actually happened.
@@ -54,19 +56,14 @@ flowchart LR
 
 **Show at the end:** Re-run an ingestion window, explain why the same keys remain unique, and trace one record from its source through Silver and Gold.
 
-## Sprint 2 · Machine learning lifecycle (Lecture 9)
+## Sprint 2 · End-to-end ML lifecycle
 
 Begin with a short walkthrough and discussion. Trace acquisition and cleaning back to Sprint 1, then explain what changes when a dataset needs to answer a prediction question. Build the training notebook in the coding session.
 
 - [ ] **Frame the problem.** Predict the six-hour percentage return of `GC=F` at each weekday checkpoint (00:00, 06:00, 12:00, 18:00 UTC). For a noon prediction, use only completed bars, the last one starting at 11:00, and aim at the close of the bar ending at 18:00. To show a price, multiply the latest close by one plus the predicted return. Returns are easier to model than raw prices because their scale doesn't drift with the gold price. Skip historical examples when the exact target is missing. Six observed rows can span more than six clock hours.
 - [ ] **Assemble and explore the dataset.** Join hourly Silver and Gold as shown in the [MLOps handoff](MLOPS.md). Freeze the input snapshot and record its source, query, and date range. Plot closes and returns, inspect gaps and warm-up nulls, and count usable examples at each checkpoint. Stored bars can include provider revisions, so the snapshot alone does not prove what was available historically at every checkpoint. Prepare a longer synthetic hourly sample for anyone without Supabase access. The short ingestion fixture is only for smoke tests.
 - [ ] **Explore before modelling (EDA).** Plot the distribution of six-hour returns and compare it with a normal curve. Gold has fat tails. Check autocorrelation of returns at lags 1–24, average volatility by hour of day and day of week, and where the gaps and market closures fall. Each finding should suggest a feature or rule out an idea. Keep the plots in the training notebook so the reasons behind the feature choices are recorded.
-- [ ] **Add features in Gold, not in the notebook.** Extend `build_hourly_features` so training and prediction use the same code. This avoids training/serving skew, where the model sees features computed one way in training and another way in production. Every feature must be trailing, using only the current and earlier bars. Candidates, roughly from simplest:
-  - lagged returns over 1, 2, 3 and 6 bars, and the 6- and 24-bar momentum
-  - distance from trend: `close / sma_20 − 1`
-  - 20-bar volatility and the bar range `(high − low) / close`
-  - volume relative to its 20-bar mean
-  - **cyclical time features:** sine and cosine of the UTC hour (`sin(2π·hour/24)`, `cos(2π·hour/24)`) and of the weekday. A plain hour number tells the model that 23:00 and 00:00 are far apart. On a circle they are neighbours
+- [ ] **Add features in Gold, not in the notebook.** Extend `build_hourly_features` so training and prediction use the same code. This avoids training/serving skew, where the model sees features computed one way in training and another way in production. Every feature must be trailing, using only the current and earlier bars. Keep it small: the [feature list in MLOPS.md](MLOPS.md#features-to-try) has eight candidates, each with the reason it might help. It also explains **cyclical time features** with a picture of what the model sees with and without them.
 
   Adding columns to `hourly_features` is a deliberate **schema evolution**. Update both SQL schemas, the upsert and the tests together, as described in [SCHEMA_DRIFT.md](SCHEMA_DRIFT.md#step-5--evolve-the-schema-on-purpose). Compare the model with and without the new features on the same validation dates.
 - [ ] **Train and compare models.** Start with a zero-return baseline, then train **XGBoost** and **LightGBM** on the same features and splits. Split by time, never randomly, and leave a six-hour gap at split boundaries so labels don't overlap the next split. Report mean absolute error in percentage points on an untouched test period. If no model beats the baseline, show the results anyway and keep the baseline as the default for the demo. That outcome is a useful lesson too.
@@ -74,13 +71,14 @@ Begin with a short walkthrough and discussion. Trace acquisition and cleaning ba
 
 **Show at the end:** One notebook that recreates the examples, explains one input-to-target row, and reports baseline, XGBoost and LightGBM scores on the same dates.
 
-## Sprint 3 · From experiment to batch inference (Lecture 10 · MLflow)
+## Sprint 3 · Automations using MLflow
 
 Use this session to answer three questions: What was trained? Which version should run? How will we know when it stops working? The lecture order: challenges in traditional ML → from experimentation to deployment → MLflow → tracking, packaging, registration, serving and inference → putting it all together.
 
 - [ ] **Show the problem first.** Open the Sprint 2 notebook and ask: which settings produced the best score last week? Which data was it trained on? Without tracking, nobody knows. This is the "challenges in traditional ML" slide, made concrete.
 - [ ] **Track runs with MLflow.** Run [MLflow Tracking on local SQLite](https://mlflow.org/docs/latest/ml/tracking/tutorials/local-database/), so no server is needed. Log each tuning trial from Sprint 2 as a run with the snapshot ID, split dates, feature list, hyperparameters, metrics and git commit. Compare runs in the MLflow UI. If MLflow setup fails in class, a small CSV run table keeps the lesson moving.
 - [ ] **Package and register.** Log the chosen model with its MLflow flavor (`mlflow.xgboost` or `mlflow.lightgbm`), together with an input signature listing the expected feature columns. Register it in the **Model Registry** and give the chosen version the alias `champion`. Prediction code loads `models:/<name>@champion`, so promoting a new version only means moving the alias. For the Prefect exercise, pass hyperparameters through a configuration block, kept separate from the model artifact and its version.
+- [ ] **Deployment strategies (theory).** Before automating anything, discuss how a new model version reaches production safely: blue-green, canary, shadow and A/B testing. See [MLOPS.md](MLOPS.md#deployment-strategies). In this project, **shadow** is the natural first choice: the `challenger` predicts every checkpoint next to the `champion`, both forecasts are stored, and the alias moves only after the challenger scores better on the same checkpoints. Moving the alias back is the rollback.
 - [ ] **Serve: batch first, real-time as a demo.** The main path is **batch inference**: a Prefect prediction flow that loads the `champion` model, reads the latest Gold row at a checkpoint, and upserts a forecast. The forecast records the symbol, checkpoint time, target time, model version, predicted return and the time it was predicted. Key it by `(symbol, checkpoint_utc, model_version)` so reruns update the same row. Optionally show `mlflow models serve` locally to contrast real-time REST serving with batch.
 - [ ] **Run it after ingestion.** The simple option is a cron about 10 minutes after each ingestion run (`10 */6 * * 1-5`). The sturdier option is a Prefect **deployment trigger** that starts prediction when `hourly-ingestion` completes. Comparing the two makes a good discussion: what happens to each when ingestion runs late? Keep training on demand, off the ingestion schedule.
 - [ ] **Automatic backfill for a near-real-time pipeline.** If the prediction flow misses checkpoints, for example after an outage, the next run should find checkpoints that have bars but no forecast and fill them in. It uses only the features available at each checkpoint (point-in-time), just as ingestion catch-up uses a watermark. Mark these forecasts as backfilled (`predicted_at` later than the checkpoint) so they are evaluated separately. A backfilled forecast never *could* have been used live. Forecasts are append-only: when a bar is revised later, keep the original forecast as it was made.
@@ -88,7 +86,7 @@ Use this session to answer three questions: What was trained? Which version shou
 
 **Show at the end:** Take one saved prediction and trace it back to the exact model version, MLflow run, and input snapshot. AWS hosting, a permanent MLflow server, and a public inference API are discussion topics or extensions.
 
-## Sprint 4 · Single machine and distributed compute (Lecture 11)
+## Sprint 4 · Distributed vs single-thread compute
 
 Lecture order: what Spark is and how it works → why it was created → when and when not to use it → case study: scanning table sizes across Databricks workspaces → solutions and a performance comparison → conclusions → classroom benchmark.
 
@@ -99,3 +97,18 @@ Lecture order: what Spark is and how it works → why it was created → when an
 - [ ] **Try the same operation in local PySpark.** Explain why startup and shuffle can cost more than the work itself on small inputs. Local Spark is still one machine. A real cluster or distributed model training is optional.
 
 **Show at the end:** One timing table and a short recommendation for this project, supported by the measurements. Keep the ingestion and forecasting demos runnable on a laptop.
+
+## Sprint 5 · Business dashboard with AI coding agents *(optional)*
+
+A session facilitated with a co-instructor on building software with AI coding agents. The goal is a small **business analytics dashboard** over everything the pipeline produces, kept in this repository under `dashboard/`.
+
+- [ ] **Write the brief before the code.** Who is the user, for example an analyst who asks "should I trust today's forecast?" Which five numbers do they need? Write a one-page spec and add a `dashboard/AGENTS.md` with conventions. Agents do better work from a clear brief, just as people do.
+- [ ] **Read through a safe data layer.** Create SQL views in Supabase for the dashboard, for example latest forecast, forecast vs actual, and pipeline freshness. Query them **server-side** with the read-only role from [SECURITY.md exercise 1](SECURITY.md#6-where-this-goes-next). Never ship the service-role key or the database URI to the browser.
+- [ ] **Build a simple Next.js app.** Suggested panels:
+  - latest close, and the next six-hour forecast as a price and a return
+  - forecast vs actual over recent checkpoints
+  - rolling error of the model vs the zero-return baseline, and directional hit rate
+  - pipeline health: time of the last ingested bar, last run state, rows per day, bars with rescued fields
+- [ ] **Review like a teammate.** Ask the agent for small changes, read every diff, run the app, and keep CI green. A PR from an agent goes through the same `protect-main` ruleset as anyone else's.
+
+**Show at the end:** A dashboard that answers one business question end to end, from the Yahoo bar through Silver, Gold, the model and the forecast, to a number on screen.

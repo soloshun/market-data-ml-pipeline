@@ -11,9 +11,10 @@ Start with the [local daily notebook](../notebooks/01_historical_ingestion.ipynb
 | 2 | Schema drift and data quality | [SCHEMA_DRIFT.md](SCHEMA_DRIFT.md) | Warm-ups 4–5 and 7–8 |
 | 3 | Security in a pipeline | [SECURITY.md](SECURITY.md) | The scavenger hunt in §2 and its exercises |
 | 4 | Release to production: PR → `main` → Prefect Cloud | [DEPLOYMENT.md](DEPLOYMENT.md), the `chore/hourly-six-hour-schedule` PR | Warm-ups 6, 9 and 10, then the assignment |
-| Lecture 9 | ML lifecycle: dataset, features, XGBoost and LightGBM, tuning | [ROADMAP.md](ROADMAP.md#sprint-2--machine-learning-lifecycle-lecture-9), [MLOPS.md](MLOPS.md) | — |
-| Lecture 10 | MLflow: tracking, registry, scheduled batch prediction | [ROADMAP.md](ROADMAP.md#sprint-3--from-experiment-to-batch-inference-lecture-10--mlflow) | — |
-| Lecture 11 | Spark, and pandas vs Polars | [ROADMAP.md](ROADMAP.md#sprint-4--single-machine-and-distributed-compute-lecture-11), notebook Section 7 | — |
+| End-to-end ML lifecycle | Dataset, EDA, features, XGBoost and LightGBM, tuning | [ROADMAP.md](ROADMAP.md#sprint-2--end-to-end-ml-lifecycle), [MLOPS.md](MLOPS.md#features-to-try) | — |
+| Automations using MLflow | Tracking, registry, deployment strategies, scheduled prediction | [ROADMAP.md](ROADMAP.md#sprint-3--automations-using-mlflow), [MLOPS.md](MLOPS.md#deployment-strategies) | — |
+| Distributed vs single-thread compute | Spark, and pandas vs Polars | [ROADMAP.md](ROADMAP.md#sprint-4--distributed-vs-single-thread-compute), notebook Section 7 | — |
+| Optional: business dashboard | A Next.js dashboard built with AI coding agents | [ROADMAP.md](ROADMAP.md#sprint-5--business-dashboard-with-ai-coding-agents-optional) | — |
 
 The warm-ups are in [STUDENT_ASSIGNMENT.md](STUDENT_ASSIGNMENT.md#part-1--warm-up-exercises). Leave parts of the code unexplained on purpose, and let students find them through the exercises. [CONCEPTS.md](CONCEPTS.md) gives them a map for reading on their own.
 
