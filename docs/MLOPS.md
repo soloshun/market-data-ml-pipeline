@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS market_data.model_registry (
     train_end_utc timestamptz NOT NULL,
     gate_start_utc timestamptz NOT NULL,     -- the window the gate scored it on
     feature_columns jsonb NOT NULL,          -- order matters at prediction time
-    hyperparameters jsonb NOT NULL,          -- the winner of the grid search
+    hyperparameters jsonb NOT NULL,          -- the best Optuna trial
     metrics jsonb NOT NULL,                  -- cv, candidate, champion and baseline MAE
     model_text text NOT NULL,                -- the trained model, saved by its library
     library_version text NOT NULL,           -- load with the same version
@@ -93,7 +93,7 @@ A new model goes to production only if it is **measurably better** than the mode
 ```mermaid
 flowchart TD
     A["Saturday: build the dataset<br/>from Silver and Gold"] --> B["Hold out the gate window:<br/>checkpoints since the champion's training cutoff"]
-    B --> C["GridSearchCV for XGBoost and LightGBM<br/>on the data before the gate window.<br/>Keep the better one as the candidate"]
+    B --> C["Optuna tuning for XGBoost and LightGBM<br/>on the data before the gate window.<br/>Keep the better one as the candidate"]
     C --> D["Score on the gate window:<br/>candidate, current champion, zero-return baseline"]
     D --> E{"Passes every<br/>gate rule?"}
     E -->|"Yes"| F["Insert as champion,<br/>retire the old one,<br/>in one transaction"]
@@ -107,45 +107,85 @@ flowchart TD
 3. **Beat the champion by a margin**, for example 2 % lower MAE. A tiny win on one noisy week isn't evidence. On the first run there is no champion, so rule 2 decides alone.
 4. **Sanity checks.** Enough gate examples (for example at least 15 checkpoints), no missing predictions, and the same feature columns that the prediction flow will send.
 
-### Tune two models, pick one
+### Hyperparameter tuning: the industry standard
 
-Run the **same** search on both libraries, so the comparison is fair: the same features, the same folds and the same metric. Eight combinations each keeps it fast and easy to read.
+Hyperparameters are the settings you choose before training, such as tree depth or learning rate. Tuning means searching for good ones. Students should know all the common methods, but we **build with one: Bayesian optimization using [Optuna](https://optuna.org/)**, the approach Databricks and most teams treat as the default.
 
-| | XGBoost grid | LightGBM grid |
-| --- | --- | --- |
-| Tree size | `max_depth`: 2, 4 | `num_leaves`: 7, 15 |
-| Step size | `learning_rate`: 0.03, 0.1 | `learning_rate`: 0.03, 0.1 |
-| Number of trees | `n_estimators`: 200, 400 | `n_estimators`: 200, 400 |
+| Method | How it picks the next settings to try | Strength | Weakness | In this course |
+| --- | --- | --- | --- | --- |
+| Manual | You guess | Builds intuition | Slow, and nobody can repeat it | Warm-up only |
+| Grid search | Tries every combination in a fixed grid | Simple and exhaustive | The cost multiplies with every new setting, and many trials are wasted on settings that don't matter | Explain |
+| Random search | Samples combinations at random | Often beats a grid with the same budget | Ignores what earlier trials learned | Explain |
+| **Bayesian optimization** (Optuna) | Learns which regions scored well so far and samples there next | Good settings in fewer trials | Trials run one after another, so it's harder to parallelize | **Build** |
+| Distributed tuning (Ray Tune, Optuna with shared storage) | Runs many trials at once across cores or machines | Scales to large searches | Needs infrastructure | Discuss in the distributed compute lecture |
 
-XGBoost limits tree **depth**. LightGBM grows trees leaf by leaf, so it limits the number of **leaves** instead. A depth-3 tree has at most 8 leaves, so the two grids cover similar sizes.
+#### Cross-validation: K-fold, and why time series needs a different version
 
-```python
-folds = TimeSeriesSplit(n_splits=4, gap=1)  # gap: rows inside one six-hour target
-searches = {
-    "xgboost": GridSearchCV(XGBRegressor(), xgb_grid, cv=folds,
-                            scoring="neg_mean_absolute_error"),
-    "lightgbm": GridSearchCV(LGBMRegressor(verbose=-1), lgbm_grid, cv=folds,
-                             scoring="neg_mean_absolute_error"),
-}
-for search in searches.values():
-    search.fit(X_train, y_train)
+**K-fold** is the gold standard for estimating how well settings will generalize. Split the data into K parts, train on K − 1, validate on the remaining one, rotate, and average the K scores. One lucky split can't fool you.
+
+Plain K-fold **shuffles** rows, and that breaks on time series. The model would train on Wednesday and be validated on Tuesday, so it learns from the future and scores too well. Use the time-ordered version instead. Each fold trains on the past and validates on the period right after it, with a gap so a six-hour target never overlaps the next fold:
+
+```text
+fold 1:  [train          ] gap [valid]
+fold 2:  [train                  ] gap [valid]
+fold 3:  [train                          ] gap [valid]
+fold 4:  [train                                  ] gap [valid]
+                                                              [test: touch once, at the end]
 ```
 
-Set `gap` to the number of rows that fit inside one six-hour target, so a training label never overlaps the validation fold. That is 1 with one row per six-hour checkpoint, or 6 if you build a row every hour.
+In scikit-learn this is `TimeSeriesSplit(n_splits=4, gap=1)`. The `gap` counts rows: 1 with one row per six-hour checkpoint, or 6 with a row every hour. A single train/validation split (Spark calls it `TrainValidationSplit`) is cheaper but noisier. K folds (Spark's `CrossValidator`) cost K times as much and are steadier.
 
-Then compare the two winners in one table:
+#### Optuna and MLflow together
+
+Tune both libraries with the **same** folds, metric and trial budget, so the comparison is fair. Locally, each library gets a parent MLflow run, and each Optuna trial is a **nested** child run, so the MLflow UI shows every trial grouped under its model.
+
+```python
+folds = TimeSeriesSplit(n_splits=4, gap=1)
+
+def objective(trial, family):
+    if family == "xgboost":
+        params = {
+            "max_depth": trial.suggest_int("max_depth", 2, 6),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 600, step=100),
+        }
+        model = XGBRegressor(**params)
+    else:
+        params = {
+            "num_leaves": trial.suggest_int("num_leaves", 4, 31),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 600, step=100),
+        }
+        model = LGBMRegressor(verbose=-1, **params)
+    mae = -cross_val_score(model, X_train, y_train, cv=folds,
+                           scoring="neg_mean_absolute_error").mean()
+    with mlflow.start_run(nested=True):
+        mlflow.log_params(params)
+        mlflow.log_metric("cv_mae", mae)
+    return mae
+
+for family in ("xgboost", "lightgbm"):
+    with mlflow.start_run(run_name=family):
+        study = optuna.create_study(direction="minimize",
+                                    sampler=optuna.samplers.TPESampler(seed=42))
+        study.optimize(lambda trial: objective(trial, family), n_trials=30)
+        mlflow.log_params(study.best_params)
+        mlflow.log_metric("best_cv_mae", study.best_value)
+```
+
+XGBoost limits tree **depth**, while LightGBM grows trees leaf by leaf, so it limits the number of **leaves** instead. A depth-3 tree has at most 8 leaves. The fixed `seed` makes a rerun suggest the same trials, which matters when a weekly job has to explain its choice.
+
+#### Pick one model
+
+Compare the two winners in one table:
 
 | Model | CV MAE (± spread across folds) | RMSE | Direction hit rate | Fit time | vs zero baseline |
 | --- | --- | --- | --- | --- | --- |
 | Zero-return baseline | … | … | n/a | 0 s | — |
-| XGBoost, best settings | … | … | … | … | … |
-| LightGBM, best settings | … | … | … | … | … |
+| XGBoost, best Optuna trial | … | … | … | … | … |
+| LightGBM, best Optuna trial | … | … | … | … | … |
 
-Pick the lower MAE. If the two are within one standard deviation of each other, the difference is probably noise, so prefer the faster or simpler model. The weekly production flow runs the same comparison, so the champion can switch from one library to the other over time.
-
-**Rollback** is two small updates in one transaction: retire the current champion, then set the previous model back to `champion`. The unique index forces that order. The next prediction run picks it up.
-
-**Honest caveat for class:** a week of checkpoints is a small sample, so this gate will sometimes keep a model that is really worse, or reject one that is really better. Real teams use longer windows, statistical tests, or a shadow period. See [deployment strategies](#deployment-strategies). The point here is the habit: **no model reaches production without being compared with the one already there.**
+Pick the lower MAE. If the two are within one standard deviation of each other, the difference is probably noise, so prefer the faster or simpler model. The weekly production flow runs the same search with in-memory Optuna studies, the same seed and the same budget. It saves the best settings and scores in `model_registry`, so the champion can switch libraries over time.
 
 ## Features to try
 
@@ -191,6 +231,19 @@ Now 23:00 and 00:00 differ by about as much as 00:00 and 01:00. **Why two column
 
 Draw the figure yourself with `uv run --group notebook python docs/assets/cyclical_time.py`.
 
+### Feature store ideas, mapped to this project
+
+Databricks and other platforms sell a **feature store**. The ideas behind it are already in this project:
+
+| Idea | What it means | Here |
+| --- | --- | --- |
+| Offline features | Historical feature values used for training | `hourly_features`, the Gold table |
+| Point-in-time correctness | Join each training example to the features *as they were known* at that moment | Only bars that had closed before the checkpoint; trailing windows only |
+| Online features | The latest values, served fast at prediction time | The prediction flow reads the newest Gold row. Batch every six hours needs no special online store |
+| Streaming features | Updated continuously from an event stream | Not used: ingestion runs in batches |
+| On-demand features | Computed at prediction time from the request itself | `hour_sin`, `hour_cos` and the weekday features could be computed from the checkpoint time alone |
+| Training/serving skew | Features computed one way in training and another in production | Avoided by computing features in one place, Gold, for both |
+
 ## Deployment strategies
 
 Training a better model is half the job. The other half is replacing the running model **without breaking anything**. These four strategies come up in Databricks and most MLOps material:
@@ -214,13 +267,40 @@ flowchart LR
 
 Batch prediction makes these strategies cheap: there is no live traffic to split, only checkpoints. The same ideas apply to a real-time API, where they need a load balancer or a serving platform. [MLflow model aliases](https://mlflow.org/docs/latest/ml/model-registry/)
 
+## Monitoring and drift
+
+A model that passed the gate can still decay. Monitoring answers *is it still working?* before users notice.
+
+| What to monitor | The question | Check in this project |
+| --- | --- | --- |
+| Pipeline health | Did it run, and is the data fresh? | Age of the latest bar, failed Prefect runs |
+| Data quality | Are the inputs valid? | Silver validation, already built |
+| **Data drift** | Has the distribution of inputs shifted? | PSI on a few features, such as `volatility_20` and `hourly_return` |
+| Prediction drift | Has the distribution of forecasts shifted? | PSI on predicted returns |
+| **Concept drift** | Has the link between inputs and target changed? | Error rises even though the inputs look similar |
+| Model performance | Is it still better than doing nothing? | Rolling MAE vs the zero-return baseline, once targets arrive |
+
+Databricks Lakehouse Monitoring groups these into three profile types: *snapshot* (a table as it is now), *time series* (values over time windows) and *inference* (model inputs, predictions and, later, labels).
+
+**Drift metrics.** Each compares a *reference* window, such as the training data, with a *recent* window:
+
+| Metric | Use it for | How to read it |
+| --- | --- | --- |
+| **PSI** (population stability index) | Numeric features split into bins, or categories | Rule of thumb: below 0.1 stable, 0.1–0.25 moderate shift, above 0.25 large shift |
+| KS test (Kolmogorov–Smirnov) | Numeric features | Look at the statistic (0 to 1). With thousands of rows, almost any difference gets a tiny p-value |
+| Wasserstein distance | Numeric features | How far the distribution moved, in the feature's own units |
+| Jensen–Shannon distance | Binned or categorical features | 0 means identical, 1 means completely different |
+| Chi-squared test | Categorical features | Is the mix of categories different? |
+
+**Build small:** the weekly training run computes PSI for three features and for the predictions, plus rolling MAE vs the baseline, and saves them with the run. Drift is a reason to **look**, not an automatic reason to retrain. A shift that doesn't hurt the error may be harmless, and retraining still has to pass the production gate.
+
 ## Topics saved for the MLOps sessions
 
 The [roadmap](ROADMAP.md) has the full plan for *End-to-end ML lifecycle*, *Automations using MLflow* and *Distributed vs single-thread compute*.
 
 - Experiment tracking and a model registry
-- Hyperparameter tuning with time-series cross-validation
-- **Data drift** (the distribution of inputs changes) and **concept drift** (the relationship between inputs and target changes). This is different from the [schema drift](SCHEMA_DRIFT.md) covered in the data engineering sessions
+- Bayesian hyperparameter tuning with Optuna and time-series cross-validation
+- **Data drift** and **concept drift**, see [monitoring and drift](#monitoring-and-drift). This is different from the [schema drift](SCHEMA_DRIFT.md) covered in the data engineering sessions
 - Scheduled batch prediction, storing forecasts, and scoring them once the actual outcome arrives
 
 The current code covers ingestion and feature storage. Build the training dataset and model on branches from `dev`.

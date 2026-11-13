@@ -81,6 +81,9 @@ These aren't in the workshop code. Each one is a common interview topic and part
 | **Change data capture (CDC)** | Stream every insert, update and delete out of an application database | [Debezium](https://debezium.io/) |
 | **Streaming** (Kafka, windows, late data, exactly-once) | When minutes are too slow | [Kafka introduction](https://kafka.apache.org/intro), [Streaming 101](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/) |
 | **Distributed compute** (Spark) | When one machine isn't enough | [Spark quick start](https://spark.apache.org/docs/latest/quick-start.html) |
+| **Bayesian hyperparameter tuning** | The standard way to tune models: learn from earlier trials instead of trying everything | [Optuna](https://optuna.org/), [MLOPS.md](MLOPS.md#hyperparameter-tuning-the-industry-standard) |
+| **Ray and Ray Tune** | Parallel Python for training and tuning across many cores or machines | [Ray Tune](https://docs.ray.io/en/latest/tune/index.html) |
+| **Feature stores and drift monitoring** | Reusing features safely, and noticing when a model's inputs change | [MLOPS.md](MLOPS.md#feature-store-ideas-mapped-to-this-project) |
 | **Data observability** (freshness, volume, schema, distribution, lineage) | Noticing broken data before your users do | [Great Expectations](https://docs.greatexpectations.io/), [Soda](https://docs.soda.io/) |
 | **Other orchestrators** (Airflow, Dagster) | You'll meet them at work; the ideas transfer from Prefect | [Airflow](https://airflow.apache.org/docs/), [Dagster](https://docs.dagster.io/) |
 | **Infrastructure as code** (Terraform) | Replace ClickOps with reviewed, repeatable code | [Terraform tutorials](https://developer.hashicorp.com/terraform/tutorials) |
