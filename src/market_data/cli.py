@@ -28,7 +28,13 @@ def make_parser() -> argparse.ArgumentParser:
     hourly.add_argument("--source", choices=["fixture", "yfinance"], default="fixture")
     hourly.add_argument("--start-at", type=datetime.fromisoformat, help="Inclusive, with offset.")
     hourly.add_argument("--end-at", type=datetime.fromisoformat, help="Exclusive, with offset.")
-    hourly.add_argument("--skip-db", action="store_true", help="Preview without database access.")
+    hourly_database = hourly.add_mutually_exclusive_group()
+    hourly_database.add_argument(
+        "--skip-db", action="store_true", help="Preview without database access."
+    )
+    hourly_database.add_argument(
+        "--require-db", action="store_true", help="Use PostgreSQL from DATABASE_URL."
+    )
     for name, help_text in [
         ("run", "Ingest a bounded window and print a feature preview"),
         ("backfill", "Re-ingest an explicit historical window"),
@@ -93,7 +99,11 @@ def run_command(args: argparse.Namespace) -> int:
     """
     if args.command == "hourly":
         prices = ingest_hourly_gold(
-            source=args.source, start_at=args.start_at, end_at=args.end_at, skip_db=args.skip_db
+            source=args.source,
+            start_at=args.start_at,
+            end_at=args.end_at,
+            skip_db=args.skip_db,
+            require_db=args.require_db,
         )
         print(prices.tail(6))
         return 0
