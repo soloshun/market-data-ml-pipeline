@@ -46,18 +46,12 @@ jobs:
       - run: uv run --locked ruff format --check .
       - run: uv run --locked pytest
       # Security gate: a known vulnerability fails the checks job, which blocks the merge
-      # once a ruleset requires "checks" on main (see docs/SECURITY.md).
+      # because the protect-main ruleset requires "checks". Reviewed, expiring exceptions
+      # live in security/audit-waivers.toml (see docs/SECURITY.md).
       - name: Audit locked dependencies
         env:
           RUST_LOG: error
-        run: |
-          if uv audit --locked --preview-features audit; then
-            echo "Dependency audit passed." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::error title=Dependency audit::Fix or upgrade the flagged packages before merging."
-            echo "Dependency audit failed. Open the audit step for details." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
+        run: uv run --locked python security/audit.py
 
   deploy:
     needs: checks

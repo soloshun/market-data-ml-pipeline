@@ -1,0 +1,25 @@
+# Reviewed exceptions to the dependency audit. Read docs/SECURITY.md §4 before adding one.
+#
+# A waiver says: "we checked this advisory, it does not put us at risk (or there is no fix
+# yet), and we accept that until a date." Every waiver needs all seven fields. It must expire
+# within 90 days of approval. After it expires, CI ignores it and the audit fails again,
+# so someone has to look at the advisory once more.
+#
+# Copy the advisory ID exactly as `uv audit` prints it. A waiver for a GHSA ID also covers
+# the same advisory's PYSEC and CVE aliases.
+#
+# until_fixed = true   waive only while no fixed version exists. Once a fix is released,
+#                      the audit fails until you upgrade. Use this when there is no patch yet.
+# until_fixed = false  waive even if a fix exists. Use this only when the advisory does not
+#                      apply to how we use the package, and explain why in `reason`.
+#
+# Example (remove the leading # to activate):
+#
+# [[waiver]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# package = "example-package"
+# reason = "Only affects example.parse_untrusted(), which this project never calls."
+# approved_by = "github-handle"
+# approved_on = 2026-11-13
+# expires = 2027-02-11
+# until_fixed = false

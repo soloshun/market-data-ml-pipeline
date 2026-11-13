@@ -1,0 +1,3 @@
+# Changes to security exceptions and CI need the owner's review.
+/security/ @soloshun
+/.github/ @soloshun
