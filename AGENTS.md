@@ -10,3 +10,4 @@
 - Leave `chore/hourly-six-hour-schedule` untouched. The instructor uses it as the live PR-to-`main` release demo.
 - Docs are student-facing. When behavior changes, update the matching guide in `docs/`, and `docs/CONCEPTS.md` if a new concept appears.
 - Track planned work in `docs/ROADMAP.md`. Tick an item in the same commit that delivers it.
+- Never add or extend a dependency-audit waiver in `security/audit-waivers.toml` without the instructor's explicit approval. Prefer upgrading the package.

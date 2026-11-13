@@ -44,7 +44,7 @@ Open each file and find the line. This makes a good 15-minute scavenger hunt for
 | --- | --- |
 | `uv.lock` pins every package version and hash. `uv sync --locked` refuses to run if the lock is out of date | [`uv.lock`](../uv.lock), every command in the README |
 | The Prefect Managed pool installs the **same** versions. A test fails if they diverge | `pip_packages` in [`prefect.yaml`](../prefect.yaml), [`test_deployment.py`](../tests/test_deployment.py) |
-| `uv audit` checks the lockfile against the OSV vulnerability database on every PR into `main` and every release. A known vulnerability **fails** the checks | *Audit locked dependencies* in `ci.yml` |
+| `uv audit` checks the lockfile against the OSV vulnerability database on every PR into `main` and every release. A known vulnerability **fails** the checks, unless a reviewed, expiring waiver covers it | *Audit locked dependencies* in `ci.yml`, [`security/audit.py`](../security/audit.py) |
 | Dependabot alerts watch the dependency graph between releases | GitHub **Security** tab (see §3) |
 
 ### The code defends itself
@@ -98,17 +98,53 @@ gh api -X POST repos/OWNER/REPO/rulesets --input - <<'JSON'
 JSON
 ```
 
-Now try it with the class. Open a PR that pins an old, vulnerable package version. Watch the audit fail, see the Merge button disabled, then upgrade the package and watch it turn green.
+Now try it with the class. Open a PR that pins an old, vulnerable package version. Watch the audit fail and the Merge button stay disabled. Then fix it both ways: upgrade the package and watch it turn green, or add a waiver and see it listed in the run summary.
 
-If an advisory has no fix yet and a release can't wait, add repository admins to the ruleset's **bypass list** so an admin can merge that one PR. Record the reason in the PR so the decision is visible.
-
-Run the same audit locally before you push:
+Run the same audit locally before you push. It uses the same waivers as CI:
 
 ```sh
-uv audit --locked --preview-features audit
+uv run --locked python security/audit.py
 ```
 
-Review the package, version, advisory and fix before you update the lockfile with `uv lock --upgrade-package <name>`. Then update the matching pin in `prefect.yaml`. `test_deployment.py` will remind you.
+### When the audit fails: triage first
+
+Not every finding is a real risk to *this* project. Never silence a finding before you've read it. Open the advisory link that `uv audit` prints and decide which case you're in:
+
+| Case | Example | What to do |
+| --- | --- | --- |
+| **A fix exists** | `idna 2.7`, fixed in `3.7` | Upgrade: `uv lock --upgrade-package idna`, then update the matching pin in `prefect.yaml` (`test_deployment.py` will remind you). This is the normal path |
+| **It's a dependency of a dependency** | A library we don't list directly | Upgrade the package that pulls it in, or the transitive package itself with `uv lock --upgrade-package` |
+| **No fix exists yet** | A new advisory with no patched release | Waiver with `until_fixed = true`. It stops applying as soon as a fix is published |
+| **It doesn't apply to us** | The flaw is in a function we never call, on a platform we don't run, or in a dev-only tool that never reaches Prefect | Waiver with `until_fixed = false`, and a `reason` that says exactly why |
+
+### Waive a finding on purpose
+
+A **waiver** is a written, reviewed decision to accept one advisory for a limited time. Banks and large companies call this a *risk acceptance* or *security exception*, and it's how teams avoid both shipping real risks and being blocked forever by findings that don't apply.
+
+Waivers live in [`security/audit-waivers.toml`](../security/audit-waivers.toml):
+
+```toml
+[[waiver]]
+id = "GHSA-xxxx-xxxx-xxxx"        # exactly as uv audit prints it
+package = "example-package"
+reason = "Only affects example.parse_untrusted(), which this project never calls."
+approved_by = "github-handle"
+approved_on = 2026-11-13
+expires = 2027-02-11              # at most 90 days after approval
+until_fixed = false
+```
+
+The guardrails make waiving deliberate rather than easy:
+
+- **It's a code change.** Adding a waiver means opening a PR, so the decision is reviewed and stays in Git history. [`CODEOWNERS`](../.github/CODEOWNERS) asks the repository owner to review any change under `security/` or `.github/`.
+- **Every field is required.** CI fails if a waiver has no reason, no approver or no dates, or if it lasts more than 90 days.
+- **It expires.** After the expiry date, CI stops applying it and the audit fails again, so someone must look at the advisory again.
+- **It's visible.** Every CI run lists the active waivers in the run summary, with who approved each one and why.
+- **It's narrow.** One waiver covers one advisory, together with its PYSEC or CVE aliases. Every other finding still fails.
+
+In a team, also tick **Require review from Code Owners** in the `protect-main` ruleset, so the person who adds a waiver can't approve it themselves. We leave it off here because a one-person repository can't approve its own PRs.
+
+**Last resort.** If production is down and even a waiver PR can't wait, add repository admins to the ruleset's **bypass list** and merge that one PR. Then follow up with a proper waiver or fix, and remove the bypass. On GitHub's **Security** tab, a Dependabot alert can be dismissed with a reason such as *tolerable risk* or *inaccurate*. That's the ClickOps version of the same decision.
 
 ## 5. If a secret leaks
 
@@ -128,6 +164,7 @@ This repository shows **software composition analysis**, which means checking th
 | Static analysis of your own code (SAST) | [SonarQube](https://docs.sonarsource.com/sonarqube-server/analyzing-source-code/analysis-overview), [Semgrep](https://semgrep.dev/docs/), [Bandit](https://bandit.readthedocs.io/) for Python, GitHub CodeQL |
 | Dependency and license policy | [Sonatype IQ Server](https://help.sonatype.com/en/sonatype-iq-server.html), [SonarQube dependency analysis](https://docs.sonarsource.com/sonarqube-server/advanced-security/analyzing-projects-for-dependencies) |
 | Secret scanning before commit | [gitleaks](https://github.com/gitleaks/gitleaks), pre-commit hooks |
+| Machine-readable "not affected" statements | [VEX (Vulnerability Exploitability eXchange)](https://www.cisa.gov/sbom), the standard form of the waivers above |
 | Short-lived credentials instead of stored keys | GitHub OIDC to a cloud provider, database roles with least privilege |
 | Row-level access control | [Supabase Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security) |
 

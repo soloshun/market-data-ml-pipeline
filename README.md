@@ -103,6 +103,7 @@ src/market_data/
   data/                          Packaged fixtures and the SQLite schema
 notebooks/                       The guided lesson
 sql/                             PostgreSQL schema and verification queries
+security/                        Dependency audit runner and reviewed waivers
 tests/                           Unit, flow and database tests
 docs/                            Guides for students and instructors
 ```
